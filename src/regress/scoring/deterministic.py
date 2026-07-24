@@ -121,10 +121,19 @@ def cost_under(
     return ScoreResult(name=name, value=estimated_cost, source="deterministic", passed=passed)
 
 
+def is_refusal(text: str) -> bool:
+    """Whether `text` matches common LLM refusal phrasing.
+
+    Shared with `regress.evalgen.run` so eval replay/live checks use the
+    exact same refusal detection as the span-based Scorer, not a
+    reimplementation that could drift from it.
+    """
+    return any(pattern.search(text) for pattern in _REFUSAL_PATTERNS)
+
+
 def not_refusal(span: Span, *, name: str = "not_refusal") -> ScoreResult:
     """Check the span's output text doesn't match common LLM refusal phrasing."""
-    text = output_text(span)
-    refused = any(pattern.search(text) for pattern in _REFUSAL_PATTERNS)
+    refused = is_refusal(output_text(span))
     return ScoreResult(
         name=name,
         value=0.0 if refused else 1.0,

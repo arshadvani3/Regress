@@ -87,14 +87,18 @@ def _parse_verdict(raw: str) -> tuple[bool, float, str]:
     return passed, score, reasoning
 
 
-def judge_rubric(
-    span: Span,
+def judge_rubric_text(
+    response_text: str,
     rubric: str,
     *,
     name: str = "judge_rubric",
     client: JudgeClient | None = None,
 ) -> ScoreResult:
-    """Score a span's output against a free-text rubric using an LLM judge.
+    """Score arbitrary response text against a free-text rubric using an LLM judge.
+
+    The text-level primitive `judge_rubric` and `regress.evalgen.run` both
+    build on — the eval runner scores fresh HTTP responses and stored
+    strings, not `Span` objects, so this is what it needs directly.
 
     Stores the rubric, model, and raw reasoning on the result for
     auditability, per CLAUDE.md's Scorer spec. Raises `JudgeError` on
@@ -102,7 +106,6 @@ def judge_rubric(
     skip or fail the run.
     """
     judge_client = client or JudgeClient()
-    response_text = output_text(span)
     user_prompt = f"Rubric:\n{rubric}\n\nResponse to evaluate:\n{response_text}"
 
     raw_verdict = judge_client.complete(system=_JUDGE_SYSTEM_PROMPT, user=user_prompt)
@@ -117,3 +120,17 @@ def judge_rubric(
         reasoning=reasoning,
         model=judge_client.model,
     )
+
+
+def judge_rubric(
+    span: Span,
+    rubric: str,
+    *,
+    name: str = "judge_rubric",
+    client: JudgeClient | None = None,
+) -> ScoreResult:
+    """Score a span's output against a free-text rubric using an LLM judge.
+
+    See `judge_rubric_text` for the underlying implementation.
+    """
+    return judge_rubric_text(output_text(span), rubric, name=name, client=client)
