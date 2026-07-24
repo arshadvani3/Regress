@@ -44,11 +44,15 @@ Issues = "https://github.com/arshadvani3/regress/issues"
 regress = "regress.cli:main"
 
 [project.optional-dependencies]
+openai = ["openai>=1.50"]
+anthropic = ["anthropic>=0.40"]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "mypy>=1.13",
     "ruff>=0.8",
+    "openai>=1.50",
+    "anthropic>=0.40",
 ]
 
 [tool.hatch.build.targets.wheel]
