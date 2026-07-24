@@ -1,0 +1,76 @@
+name: Regress CI Gate
+description: >
+  Run a Regress eval suite against a live endpoint (or replay recorded
+  traces) and fail the build on a statistically significant regression.
+author: Arsh Advani
+
+inputs:
+  evals-dir:
+    description: Directory containing generated eval YAML files.
+    required: false
+    default: evals
+  against:
+    description: >
+      'traces' to replay recorded case data, or a URL to POST each case's
+      input to and score the live response.
+    required: false
+    default: traces
+  alpha:
+    description: Significance threshold for the two-proportion regression test.
+    required: false
+    default: "0.05"
+  judge-api-key:
+    description: >
+      API key for judge-tier evals (passed as REGRESS_JUDGE_API_KEY).
+      Not required if the suite has no judge assertions.
+    required: false
+    default: ""
+  python-version:
+    description: Python version to run Regress under.
+    required: false
+    default: "3.12"
+
+outputs:
+  passed:
+    description: Number of eval cases that passed.
+    value: ${{ steps.run.outputs.passed }}
+  total:
+    description: Total number of eval cases run.
+    value: ${{ steps.run.outputs.total }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Regress
+      shell: bash
+      # Not yet published to PyPI (pre-v0.1.0) — installs from the tagged
+      # source until `pip install regress-ai` is live, then this becomes
+      # the one line to change.
+      run: pip install "regress-ai @ git+https://github.com/arshadvani3/Regress.git"
+
+    - name: Run eval gate
+      id: run
+      shell: bash
+      env:
+        REGRESS_JUDGE_API_KEY: ${{ inputs.judge-api-key }}
+      run: |
+        set +e
+        output=$(regress run "${{ inputs.evals-dir }}" \
+          --against "${{ inputs.against }}" \
+          --alpha "${{ inputs.alpha }}" \
+          --gate 2>&1)
+        exit_code=$?
+        echo "$output"
+
+        passed_total=$(echo "$output" | grep -oE '^[0-9]+/[0-9]+ case' | head -1 | grep -oE '[0-9]+' || true)
+        passed=$(echo "$passed_total" | sed -n '1p')
+        total=$(echo "$passed_total" | sed -n '2p')
+        echo "passed=${passed:-0}" >> "$GITHUB_OUTPUT"
+        echo "total=${total:-0}" >> "$GITHUB_OUTPUT"
+
+        exit $exit_code
