@@ -119,5 +119,49 @@ def score(config_path: Path | None, rescore: bool) -> None:
             click.echo(f"  skipped: {error}")
 
 
+@main.command()
+@click.option(
+    "--min-cluster-size",
+    default=3,
+    show_default=True,
+    help="Minimum number of similar failing traces to form a cluster.",
+)
+def cluster(min_cluster_size: int) -> None:
+    """Embed scored-bad traces, cluster them, and update Issues.
+
+    Requires the 'cluster' extra: pip install 'regress-ai[cluster]'
+    """
+    from regress.clustering.run import run_clustering
+    from regress.db import get_session, init_db
+
+    init_db()
+    with get_session() as session:
+        try:
+            result = run_clustering(session, min_cluster_size=min_cluster_size)
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
+        session.commit()
+
+        if result.traces_considered < min_cluster_size:
+            click.echo(
+                f"Only {result.traces_considered} scored-bad trace(s) found "
+                f"(need at least {min_cluster_size}). Nothing to cluster yet."
+            )
+            return
+
+        click.echo(
+            f"Considered {result.traces_considered} scored-bad trace(s), "
+            f"found {result.clusters_found} cluster(s)."
+        )
+        click.echo(f"  new issues: {len(result.lifecycle.new_issues)}")
+        click.echo(f"  updated issues: {len(result.lifecycle.updated_issues)}")
+        if result.lifecycle.regressed_issues:
+            click.echo(f"  REGRESSED issues: {len(result.lifecycle.regressed_issues)}")
+            for issue in result.lifecycle.regressed_issues:
+                click.echo(f"    - {issue.title!r} ({issue.id}) is failing again")
+        for error in result.titling_errors:
+            click.echo(f"  titling failed: {error}")
+
+
 if __name__ == "__main__":
     main()
