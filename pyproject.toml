@@ -48,6 +48,7 @@ regress = "regress.cli:main"
 [project.optional-dependencies]
 openai = ["openai>=1.50"]
 anthropic = ["anthropic>=0.40"]
+cluster = ["sentence-transformers>=3.0", "scikit-learn>=1.3", "numpy>=1.26"]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
@@ -55,6 +56,9 @@ dev = [
     "ruff>=0.8",
     "openai>=1.50",
     "anthropic>=0.40",
+    "sentence-transformers>=3.0",
+    "scikit-learn>=1.3",
+    "numpy>=1.26",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -74,10 +78,17 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+# numpy's bundled stubs use PEP 695 `type` aliases (3.12+ only syntax), so
+# this must track our newest supported Python, not requires-python's floor
+# (3.11) — mypy's target controls which typing syntax it accepts in stubs,
+# not what Python the package actually runs on.
+python_version = "3.13"
 strict = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "slow: downloads/runs a real model (sentence-transformers) instead of a fake",
+]
