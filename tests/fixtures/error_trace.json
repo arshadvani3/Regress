@@ -1,0 +1,63 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "quickstart-demo"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "regress.instrument"
+          },
+          "spans": [
+            {
+              "traceId": "G/dlGRbNQ92ESOshHIAxnQ==",
+              "spanId": "EfBnqgupArg=",
+              "name": "chat gpt-4",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1784874491325555968",
+              "endTimeUnixNano": "1784874492325555968",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4"
+                  }
+                },
+                {
+                  "key": "error.type",
+                  "value": {
+                    "stringValue": "rate_limit_error"
+                  }
+                }
+              ],
+              "status": {
+                "message": "rate limit exceeded",
+                "code": "STATUS_CODE_ERROR"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
