@@ -163,5 +163,121 @@ def cluster(min_cluster_size: int) -> None:
             click.echo(f"  titling failed: {error}")
 
 
+@main.command()
+@click.option(
+    "--dir",
+    "evals_dir",
+    type=click.Path(path_type=Path),
+    default=Path("evals"),
+    show_default=True,
+    help="Directory to write generated eval YAML + pytest files into.",
+)
+@click.option(
+    "--state",
+    "issue_state",
+    default="active",
+    show_default=True,
+    help="Only generate evals for issues in this lifecycle state ('all' for every state).",
+)
+def evalgen(evals_dir: Path, issue_state: str) -> None:
+    """Generate eval files for issues: representative sanitized inputs plus
+    an assertion type chosen from what actually caught the failure.
+    """
+    from regress.db import get_session, init_db
+    from regress.evalgen.orchestrate import generate_evals_for_issues
+    from regress.models import Issue
+
+    init_db()
+    with get_session() as session:
+        query = select(Issue)
+        if issue_state != "all":
+            query = query.where(Issue.state == issue_state)
+        issues = list(session.execute(query).scalars().all())
+
+        if not issues:
+            click.echo(f"No issues in state {issue_state!r}. Run `regress cluster` first.")
+            return
+
+        outcomes = generate_evals_for_issues(session, issues, directory=evals_dir)
+        session.commit()
+
+        if not outcomes:
+            click.echo("No evals generated — issues had no usable trace content.")
+            return
+
+        click.echo(f"Generated {len(outcomes)} eval(s) in {evals_dir}/:")
+        for outcome in outcomes:
+            click.echo(
+                f"  {outcome.yaml_path.name} — {outcome.issue_title!r} "
+                f"({outcome.case_count} case(s))"
+            )
+
+
+@main.command(name="run")
+@click.argument("evals_dir", type=click.Path(path_type=Path), default=Path("evals"))
+@click.option(
+    "--against",
+    default="traces",
+    show_default=True,
+    help="'traces' to replay recorded case data, or a URL to POST each case's "
+    "input to and score the live response.",
+)
+@click.option(
+    "--gate",
+    is_flag=True,
+    default=False,
+    help="Exit nonzero if the pass rate dropped significantly vs. the last run "
+    "(two-proportion z-test, not a raw diff). Updates the baseline on success.",
+)
+@click.option("--alpha", default=0.05, show_default=True, help="Significance threshold for --gate.")
+def run(evals_dir: Path, against: str, gate: bool, alpha: float) -> None:
+    """Run every eval in EVALS_DIR and report pass/fail."""
+    from regress.evalgen.gate import two_proportion_z_test
+    from regress.evalgen.suite import load_baseline, run_suite, save_baseline
+
+    if not evals_dir.exists():
+        raise click.ClickException(f"{evals_dir} does not exist.")
+
+    result = run_suite(evals_dir, against=against)
+
+    for error in result.load_errors:
+        click.echo(f"  skipped (invalid eval file): {error}")
+
+    if result.total_count == 0:
+        click.echo("No eval cases to run.")
+        raise SystemExit(1 if gate else 0)
+
+    click.echo(f"{result.passed_count}/{result.total_count} case(s) passed against {against!r}.")
+    for outcome in result.outcomes:
+        if not outcome.passed:
+            click.echo(f"  FAIL {outcome.trace_id}: {outcome.reasoning}")
+
+    if not gate:
+        return
+
+    baseline = load_baseline(evals_dir)
+    if baseline is None:
+        click.echo("No baseline yet — recording this run as the baseline.")
+        save_baseline(evals_dir, result)
+        return
+
+    baseline_passed, baseline_total = baseline
+    significance = two_proportion_z_test(
+        baseline_passed, baseline_total, result.passed_count, result.total_count, alpha=alpha
+    )
+    click.echo(
+        f"Baseline: {significance.baseline_pass_rate:.1%} pass rate "
+        f"({baseline_passed}/{baseline_total}). "
+        f"Current: {significance.current_pass_rate:.1%} "
+        f"({result.passed_count}/{result.total_count})."
+    )
+    if significance.is_regression:
+        click.echo(f"REGRESSION: p={significance.p_value:.4f} < alpha={alpha}")
+        raise SystemExit(1)
+
+    click.echo(f"No significant regression (p={significance.p_value:.4f}).")
+    save_baseline(evals_dir, result)
+
+
 if __name__ == "__main__":
     main()
