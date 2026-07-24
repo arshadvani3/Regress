@@ -30,7 +30,7 @@ def _spans_oldest_first(trace: Trace) -> list[Span]:
     return sorted(trace.spans, key=lambda s: _as_aware(s.started_at))
 
 
-def _last_user_message(trace: Trace) -> str:
+def last_user_message(trace: Trace) -> str:
     """The most recent input/user message across the trace's spans, by span start time."""
     for span in reversed(_spans_oldest_first(trace)):
         input_messages = sorted(
@@ -42,7 +42,7 @@ def _last_user_message(trace: Trace) -> str:
     return ""
 
 
-def _final_output(trace: Trace) -> str:
+def final_output(trace: Trace) -> str:
     """The last output message across the trace's spans, by span start time."""
     for span in reversed(_spans_oldest_first(trace)):
         output_messages = sorted(
@@ -80,7 +80,7 @@ class ClusterableTrace:
 
 def failure_text(trace: Trace) -> ClusterableTrace:
     """Build the (failure reason + last user msg + output) text for one trace."""
-    parts = [_failure_reasons(trace), _last_user_message(trace), _final_output(trace)]
+    parts = [_failure_reasons(trace), last_user_message(trace), final_output(trace)]
     text = "\n".join(p for p in parts if p)
     return ClusterableTrace(trace_id=trace.id, text=text)
 
@@ -97,4 +97,10 @@ def scored_bad_traces(traces: list[Trace]) -> list[Trace]:
     return result
 
 
-__all__ = ["ClusterableTrace", "failure_text", "scored_bad_traces"]
+__all__ = [
+    "ClusterableTrace",
+    "failure_text",
+    "final_output",
+    "last_user_message",
+    "scored_bad_traces",
+]
