@@ -11,9 +11,11 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 0).** The architecture below is the target shape.
-> Today `regress up` serves a health check. See [MASTER_PLAN](#roadmap) for
-> what's built vs. planned.
+> **Status: pre-alpha (Phase 1).** The architecture below is the target shape.
+> Today `regress up` serves a health check and a real OTLP/HTTP ingest
+> endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
+> convention spans into SQLite. `regress traces` lists what's been ingested.
+> See [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
 
@@ -93,7 +95,7 @@ eval → gate) something you never do by hand again.
 Tracking against the MASTER_PLAN in `CLAUDE.md`:
 
 - [x] **Phase 0 — Skeleton.** Repo, pyproject, CLI stub, CI, license, README.
-- [ ] **Phase 1 — Ingest + Store.** OTLP endpoint, GenAI-convention parsing, SQLite storage.
+- [x] **Phase 1 — Ingest + Store.** OTLP endpoint, GenAI-convention parsing, SQLite storage.
 - [ ] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
 - [ ] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
 - [ ] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
@@ -116,6 +118,18 @@ pip install -e ".[dev]"
 pytest
 ruff check .
 mypy src
+```
+
+To try ingestion today, point any OTLP/HTTP exporter at `regress up`'s
+`/v1/traces` endpoint (protobuf or JSON, following the [OpenTelemetry GenAI
+semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai)),
+then list what came in:
+
+```bash
+regress up &
+curl -X POST http://localhost:8990/v1/traces \
+  -H "Content-Type: application/x-protobuf" --data-binary @trace.pb
+regress traces
 ```
 
 ## License
