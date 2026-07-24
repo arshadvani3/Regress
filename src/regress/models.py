@@ -1,7 +1,8 @@
 """Data model per CLAUDE.md's minimum schema.
 
 Phase 1 implements `traces`, `spans`, and `messages`. Phase 3 adds `scores`.
-Phase 4 adds `issues`/`issue_traces`. `evals` and `labels` land later.
+Phase 4 adds `issues`/`issue_traces`. Phase 5 adds `evals`. `labels` lands
+later (Phase 6, Calibrator).
 """
 
 from __future__ import annotations
@@ -147,6 +148,7 @@ class Issue(Base):
     trace_links: Mapped[list[IssueTrace]] = relationship(
         back_populates="issue", cascade="all, delete-orphan"
     )
+    evals: Mapped[list[Eval]] = relationship(back_populates="issue", cascade="all, delete-orphan")
 
 
 class IssueTrace(Base):
@@ -164,3 +166,27 @@ class IssueTrace(Base):
 
     issue: Mapped[Issue] = relationship(back_populates="trace_links")
     trace: Mapped[Trace] = relationship(back_populates="issue_links")
+
+
+class Eval(Base):
+    """A generated regression test for one issue.
+
+    `path` points at the YAML file on disk (human-editable, the source of
+    truth for `regress run`); this row just tracks that it was generated,
+    from which issue, and what assertion tier it uses. Deleting the DB row
+    never deletes the file — `evals/` is meant to be committed to the
+    user's repo, per CLAUDE.md's "everything is also a file" principle.
+    """
+
+    __tablename__ = "evals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    issue_id: Mapped[str] = mapped_column(String, ForeignKey("issues.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    assertion_type: Mapped[str] = mapped_column(String)  # "deterministic" | "judge"
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    issue: Mapped[Issue] = relationship(back_populates="evals")
