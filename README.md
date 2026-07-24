@@ -11,7 +11,7 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 3).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 4).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
@@ -21,7 +21,11 @@ production trace → clustered failure → tracked issue → auto-generated eval
 > the fact. `regress score` runs deterministic checks (JSON-schema, regex/
 > exact-match, tool-call args, latency/cost thresholds, refusal detection)
 > and an optional LLM-judge over ingested spans, configured via an optional
-> `regress.yaml`. See [MASTER_PLAN](#roadmap) for what's built vs. planned.
+> `regress.yaml`. `regress cluster` embeds scored-bad traces, groups them
+> with HDBSCAN, and writes each cluster up as an Issue with an LLM title and
+> description — including detecting when a `resolved` issue's failure
+> pattern comes back as `regressed`. See [MASTER_PLAN](#roadmap) for what's
+> built vs. planned.
 
 ## Quickstart
 
@@ -104,7 +108,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 1 — Ingest + Store.** OTLP endpoint, GenAI-convention parsing, SQLite storage.
 - [x] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
 - [x] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
-- [ ] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
+- [x] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
 - [ ] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
 - [ ] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
 - [ ] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
@@ -190,6 +194,33 @@ regress score --config regress.yaml
 Every score is stored with its source (`deterministic` | `judge` | `human`)
 and, for judge verdicts, the rubric, model, and raw reasoning — so verdicts
 stay auditable. `--rescore` re-runs checks on spans that already have scores.
+
+Once enough traces are scored bad, cluster them into Issues:
+
+```bash
+pip install 'regress-ai[cluster]'   # sentence-transformers + scikit-learn
+regress cluster
+```
+
+For each trace with a failed score, `regress cluster` embeds (failure
+reason + last user message + final output) with a local `bge-small-en-v1.5`
+model, groups similar failures with HDBSCAN, and asks the judge model to
+write a title and description for each cluster. A cluster that matches an
+existing issue adds its traces there; a cluster that matches a **resolved**
+issue flips it to **regressed** — the loudest signal in the tool, because it
+means a fix didn't hold:
+
+```
+Considered 42 scored-bad trace(s), found 3 cluster(s).
+  new issues: 1
+  updated issues: 1
+  REGRESSED issues: 1
+    - 'Refuses valid refund requests' (a1b2c3d4) is failing again
+```
+
+`sentence-transformers` isn't a core dependency — it pulls in `torch`,
+which would blow past the "5 minutes to first trace" quickstart — so
+clustering is the `cluster` extra, installed only when you need it.
 
 ## License
 
