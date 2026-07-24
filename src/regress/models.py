@@ -1,7 +1,7 @@
 """Data model per CLAUDE.md's minimum schema.
 
-Phase 1 implements `traces`, `spans`, and `messages`. `scores`, `issues`,
-`issue_traces`, `evals`, and `labels` land in later phases.
+Phase 1 implements `traces`, `spans`, and `messages`. Phase 3 adds `scores`.
+`issues`, `issue_traces`, `evals`, and `labels` land in later phases.
 """
 
 from __future__ import annotations
@@ -39,6 +39,9 @@ class Trace(Base):
     spans: Mapped[list[Span]] = relationship(
         back_populates="trace", cascade="all, delete-orphan"
     )
+    scores: Mapped[list[Score]] = relationship(
+        back_populates="trace", cascade="all, delete-orphan"
+    )
 
 
 class Span(Base):
@@ -65,6 +68,9 @@ class Span(Base):
     messages: Mapped[list[Message]] = relationship(
         back_populates="span", cascade="all, delete-orphan"
     )
+    scores: Mapped[list[Score]] = relationship(
+        back_populates="span", cascade="all, delete-orphan"
+    )
 
 
 class Message(Base):
@@ -79,3 +85,36 @@ class Message(Base):
     position: Mapped[int] = mapped_column(default=0)
 
     span: Mapped[Span] = relationship(back_populates="messages")
+
+
+class Score(Base):
+    """A deterministic-, judge-, or human-sourced verdict on a span or trace.
+
+    Scored at the span level when a check is about one call (e.g. a single
+    tool-call's arguments); at the trace level when it's about the whole
+    interaction (e.g. a human feedback rating). Exactly one of
+    `span_id`/`trace_id` is set.
+    """
+
+    __tablename__ = "scores"
+    __table_args__ = (
+        Index("ix_scores_span_id_name", "span_id", "name"),
+        Index("ix_scores_trace_id_name", "trace_id", "name"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    span_id: Mapped[str | None] = mapped_column(String, ForeignKey("spans.id"), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String, ForeignKey("traces.id"), nullable=True)
+    source: Mapped[str] = mapped_column(String)  # "deterministic" | "judge" | "human"
+    name: Mapped[str] = mapped_column(String)
+    value: Mapped[float] = mapped_column(Float)
+    passed: Mapped[bool | None] = mapped_column(nullable=True)
+    rubric: Mapped[str | None] = mapped_column(String, nullable=True)
+    reasoning: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    span: Mapped[Span | None] = relationship(back_populates="scores")
+    trace: Mapped[Trace | None] = relationship(back_populates="scores")
