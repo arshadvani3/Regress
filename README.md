@@ -11,11 +11,14 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 1).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 2).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
-> See [MASTER_PLAN](#roadmap) for what's built vs. planned.
+> `from regress import instrument` patches the `openai` and `anthropic`
+> clients to emit those spans automatically, `@task` groups a function's
+> calls into one trace, and `feedback()` attaches a score to a trace after
+> the fact. See [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
 
@@ -96,7 +99,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 
 - [x] **Phase 0 — Skeleton.** Repo, pyproject, CLI stub, CI, license, README.
 - [x] **Phase 1 — Ingest + Store.** OTLP endpoint, GenAI-convention parsing, SQLite storage.
-- [ ] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
+- [x] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
 - [ ] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
 - [ ] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
 - [ ] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
@@ -131,6 +134,25 @@ curl -X POST http://localhost:8990/v1/traces \
   -H "Content-Type: application/x-protobuf" --data-binary @trace.pb
 regress traces
 ```
+
+Or use `instrument()` so your existing `openai`/`anthropic` calls export
+automatically — no manual OTLP payloads required:
+
+```python
+from regress import instrument, task, feedback
+
+instrument()  # patches openai + anthropic clients in this process
+
+@task(name="answer_question")
+def answer(question: str) -> str:
+    response = client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+    return response.choices[0].message.content
+
+# later, e.g. from a user thumbs-down in your app
+feedback(trace_id=trace_id, score=0.0, comment="wrong refund policy")
+```
+
+See [examples/quickstart.py](examples/quickstart.py) for a runnable version.
 
 ## License
 
