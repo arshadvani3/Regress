@@ -1,7 +1,7 @@
 """Data model per CLAUDE.md's minimum schema.
 
 Phase 1 implements `traces`, `spans`, and `messages`. Phase 3 adds `scores`.
-`issues`, `issue_traces`, `evals`, and `labels` land in later phases.
+Phase 4 adds `issues`/`issue_traces`. `evals` and `labels` land later.
 """
 
 from __future__ import annotations
@@ -40,6 +40,9 @@ class Trace(Base):
         back_populates="trace", cascade="all, delete-orphan"
     )
     scores: Mapped[list[Score]] = relationship(
+        back_populates="trace", cascade="all, delete-orphan"
+    )
+    issue_links: Mapped[list[IssueTrace]] = relationship(
         back_populates="trace", cascade="all, delete-orphan"
     )
 
@@ -118,3 +121,46 @@ class Score(Base):
 
     span: Mapped[Span | None] = relationship(back_populates="scores")
     trace: Mapped[Trace | None] = relationship(back_populates="scores")
+
+
+class Issue(Base):
+    """A cluster of scored-bad traces, with an LLM-written title/description.
+
+    Lifecycle: `active` (open, unresolved) -> `resolved` (fixed, no longer
+    seeing new failures) -> `regressed` (a new failing trace landed back in
+    a resolved cluster — the fix didn't hold). `regressed` is the headline
+    state transition per CLAUDE.md; the Clusterer is what detects it.
+    """
+
+    __tablename__ = "issues"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    title: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String, default="active")  # active|resolved|regressed
+    centroid_vector: Mapped[list[float]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    trace_links: Mapped[list[IssueTrace]] = relationship(
+        back_populates="issue", cascade="all, delete-orphan"
+    )
+
+
+class IssueTrace(Base):
+    """Membership of one trace in one issue's cluster."""
+
+    __tablename__ = "issue_traces"
+    __table_args__ = (Index("ix_issue_traces_issue_id_trace_id", "issue_id", "trace_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    issue_id: Mapped[str] = mapped_column(String, ForeignKey("issues.id"), index=True)
+    trace_id: Mapped[str] = mapped_column(String, ForeignKey("traces.id"), index=True)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    issue: Mapped[Issue] = relationship(back_populates="trace_links")
+    trace: Mapped[Trace] = relationship(back_populates="issue_links")
