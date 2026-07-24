@@ -11,7 +11,7 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 4).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 5).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
@@ -24,8 +24,11 @@ production trace → clustered failure → tracked issue → auto-generated eval
 > `regress.yaml`. `regress cluster` embeds scored-bad traces, groups them
 > with HDBSCAN, and writes each cluster up as an Issue with an LLM title and
 > description — including detecting when a `resolved` issue's failure
-> pattern comes back as `regressed`. See [MASTER_PLAN](#roadmap) for what's
-> built vs. planned.
+> pattern comes back as `regressed`. `regress evalgen` turns each issue into
+> a sanitized, human-editable YAML eval + pytest module, and `regress run
+> evals/ --gate` replays them (or hits a live endpoint) and fails the build
+> only on a statistically significant regression. See
+> [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
 
@@ -74,7 +77,7 @@ YAML until you want it.
                         └────────────────────────────────────────────────┘
 
  CI: regress run evals/ --against <traces|live app> ──▶ pass/fail + significance test
-     shipped as a reusable GitHub Action (regress-ai/gate-action)
+     shipped as a reusable GitHub Action (.github/actions/gate)
 ```
 
 ## Why not just Langfuse / Braintrust / \<observability vendor\>?
@@ -109,7 +112,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
 - [x] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
 - [x] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
-- [ ] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
+- [x] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
 - [ ] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
 - [ ] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
 - [ ] **Phase 8 — Dogfood + case study.** Real numbers in `docs/case-study.md`.
@@ -221,6 +224,60 @@ Considered 42 scored-bad trace(s), found 3 cluster(s).
 `sentence-transformers` isn't a core dependency — it pulls in `torch`,
 which would blow past the "5 minutes to first trace" quickstart — so
 clustering is the `cluster` extra, installed only when you need it.
+
+Turn issues into committed regression tests:
+
+```bash
+regress evalgen        # writes evals/<issue-slug>.yaml + test_<issue-slug>.py
+```
+
+Each eval picks its assertion from whatever actually caught the failure —
+a judge rubric if a judge check failed, `not_refusal` if that's what
+tripped, or (for checks whose original parameters aren't recoverable from
+the stored score, like `latency_under`'s threshold) a per-case pin on the
+exact bad output. Representative inputs and outputs are sanitized
+(`sanitize()` strips emails, phone numbers, API-key-shaped tokens, and
+common name introductions) before they ever touch a file. The generated
+YAML is the source of truth; the paired pytest module is a thin shim so
+`pytest evals/` works standalone too, per CLAUDE.md's "everything is also
+a file" principle.
+
+Run the suite two ways:
+
+```bash
+regress run evals/                              # replay: confirms each eval still fails against its own recorded bad output
+regress run evals/ --against http://localhost:8000/predict   # live: POST each case's input, score the fresh response
+```
+
+`--against` a live endpoint is the real regression check — a passing case
+means the fix held. Add `--gate` to fail the build on a regression:
+
+```bash
+regress run evals/ --against http://localhost:8000/predict --gate
+```
+
+The gate is a **two-proportion significance test**, not a raw pass-rate
+diff — a single flaky case dropping the pass rate from 100% to 95% won't
+fail the build, but a systemic drop from 95% to 50% will (p < 0.001 in
+that case). The baseline is a small `.regress-baseline.json` next to your
+evals; commit it alongside `evals/` so CI has something to compare
+against, or restore it from cache if you'd rather not commit it.
+
+A composite GitHub Action wraps this — copy into your workflow:
+
+```yaml
+name: Regress gate
+on: [pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arshadvani3/Regress/.github/actions/gate@main
+        with:
+          against: https://staging.example.com/predict
+          judge-api-key: ${{ secrets.REGRESS_JUDGE_API_KEY }}
+```
 
 ## License
 
