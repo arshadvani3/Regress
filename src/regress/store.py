@@ -1,0 +1,72 @@
+"""Persist normalized OTLP spans, merging into existing traces/spans on conflict."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy.orm import Session
+
+from regress.models import Message, Span, Trace
+
+
+def _as_aware(value: datetime | None) -> datetime | None:
+    """SQLite drops tzinfo on round-trip; treat naive datetimes as UTC."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def upsert_trace(session: Session, trace: Trace) -> Trace:
+    existing = session.get(Trace, trace.id)
+    if existing is None:
+        session.add(trace)
+        session.flush()
+        return trace
+
+    existing_started_at = _as_aware(existing.started_at)
+    existing_ended_at = _as_aware(existing.ended_at)
+
+    if trace.root_span_id is not None:
+        existing.root_span_id = trace.root_span_id
+    if trace.app is not None:
+        existing.app = trace.app
+    starts_earlier = existing_started_at is None or (
+        trace.started_at is not None and trace.started_at < existing_started_at
+    )
+    if trace.started_at is not None and starts_earlier:
+        existing.started_at = trace.started_at
+        existing_started_at = trace.started_at
+
+    ends_later = existing_ended_at is None or (
+        trace.ended_at is not None and trace.ended_at > existing_ended_at
+    )
+    if trace.ended_at is not None and ends_later:
+        existing.ended_at = trace.ended_at
+        existing_ended_at = trace.ended_at
+    if existing_started_at is not None and existing_ended_at is not None:
+        existing.latency_ms = (existing_ended_at - existing_started_at).total_seconds() * 1000
+    if trace.status == "error":
+        existing.status = "error"
+    session.flush()
+    return existing
+
+
+def upsert_span(session: Session, span: Span, messages: list[Message]) -> Span:
+    existing = session.get(Span, span.id)
+    if existing is not None:
+        session.delete(existing)
+        session.flush()
+    session.add(span)
+    for message in messages:
+        session.add(message)
+    session.flush()
+    return span
+
+
+def store_parsed_spans(session: Session, parsed: list[tuple[Trace, Span, list[Message]]]) -> int:
+    count = 0
+    for trace, span, messages in parsed:
+        upsert_trace(session, trace)
+        upsert_span(session, span, messages)
+        count += 1
+    return count
