@@ -31,6 +31,8 @@ dependencies = [
     "sqlalchemy>=2.0",
     "pydantic>=2.9",
     "httpx>=0.27",
+    "opentelemetry-proto>=1.27,<2",
+    "protobuf>=5,<6",
 ]
 
 [project.urls]
@@ -51,6 +53,12 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/regress"]
+
+# CPython on this platform treats leading-underscore .pth filenames as
+# hidden and skips them at startup, which breaks hatchling's default
+# editable-install finder script. Use the plain-path .pth strategy instead.
+[tool.hatch.build.targets.editable]
+dev-mode-dirs = ["src"]
 
 [tool.ruff]
 line-length = 100
