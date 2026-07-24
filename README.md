@@ -11,14 +11,17 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 2).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 3).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
 > `from regress import instrument` patches the `openai` and `anthropic`
 > clients to emit those spans automatically, `@task` groups a function's
 > calls into one trace, and `feedback()` attaches a score to a trace after
-> the fact. See [MASTER_PLAN](#roadmap) for what's built vs. planned.
+> the fact. `regress score` runs deterministic checks (JSON-schema, regex/
+> exact-match, tool-call args, latency/cost thresholds, refusal detection)
+> and an optional LLM-judge over ingested spans, configured via an optional
+> `regress.yaml`. See [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
 
@@ -100,7 +103,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 0 — Skeleton.** Repo, pyproject, CLI stub, CI, license, README.
 - [x] **Phase 1 — Ingest + Store.** OTLP endpoint, GenAI-convention parsing, SQLite storage.
 - [x] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
-- [ ] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
+- [x] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
 - [ ] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
 - [ ] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
 - [ ] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
@@ -153,6 +156,40 @@ feedback(trace_id=trace_id, score=0.0, comment="wrong refund policy")
 ```
 
 See [examples/quickstart.py](examples/quickstart.py) for a runnable version.
+
+Once traces are ingested, score them with the two-tier Scorer. With no
+config, `regress score` runs the zero-config `not_refusal` check against
+every unscored span:
+
+```bash
+regress score
+```
+
+For anything else — schema validation, thresholds, or a judge rubric —
+add an optional `regress.yaml`:
+
+```yaml
+judge:
+  model: gpt-4o-mini          # any OpenAI-compatible endpoint, incl. Ollama
+  base_url: https://api.openai.com/v1
+
+checks:
+  - check: not_refusal
+  - check: latency_under
+    name: fast_response
+    max_ms: 2000
+  - check: judge_rubric
+    name: helpfulness
+    rubric: "Does the response directly answer the user's question?"
+```
+
+```bash
+regress score --config regress.yaml
+```
+
+Every score is stored with its source (`deterministic` | `judge` | `human`)
+and, for judge verdicts, the rubric, model, and raw reasoning — so verdicts
+stay auditable. `--rescore` re-runs checks on spans that already have scores.
 
 ## License
 
