@@ -11,7 +11,7 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 5).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 6).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
@@ -27,7 +27,10 @@ production trace → clustered failure → tracked issue → auto-generated eval
 > pattern comes back as `regressed`. `regress evalgen` turns each issue into
 > a sanitized, human-editable YAML eval + pytest module, and `regress run
 > evals/ --gate` replays them (or hits a live endpoint) and fails the build
-> only on a statistically significant regression. See
+> only on a statistically significant regression. `regress calibrate` samples
+> judge verdicts for hand-labeling, computes Cohen's kappa judge-vs-human
+> (overall and per rubric), and suggests a `score` threshold that would
+> agree with humans better than the judge's own pass/fail call. See
 > [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
@@ -113,7 +116,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
 - [x] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
 - [x] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
-- [ ] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
+- [x] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
 - [ ] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
 - [ ] **Phase 8 — Dogfood + case study.** Real numbers in `docs/case-study.md`.
 
@@ -278,6 +281,48 @@ jobs:
           against: https://staging.example.com/predict
           judge-api-key: ${{ secrets.REGRESS_JUDGE_API_KEY }}
 ```
+
+The judge is doing real work throughout this loop — every `judge_rubric` score
+feeds clustering, eval generation, and the gate — so it's worth knowing how
+much to trust it. The Calibrator hand-labels a sample of judge verdicts and
+reports judge-vs-human agreement:
+
+```bash
+regress calibrate --label 20 --labeler you@example.com
+```
+
+```
+[1/20] rubric: Does the response directly answer the user's question?
+  output: I'm sorry, but I can't help with that.
+  judge verdict: FAIL (score=0.10) — response refuses instead of answering
+  Does this response actually pass? [y/N]:
+```
+
+Sampling is stratified by rubric, so a small N still covers every rubric
+in use rather than exhausting whichever one has the most scores. Already-
+labeled scores are skipped by default (`--include-labeled` to re-label for
+inter-labeler agreement). Then:
+
+```bash
+regress calibrate --report
+```
+
+```
+## Overall
+| Scope | N | Agreement | Cohen's kappa | Judge pass rate | Human pass rate |
+|---|---|---|---|---|---|
+| Overall | 20 | 85.0% | 0.690 (substantial) | 45.0% | 40.0% |
+```
+
+Kappa, not raw agreement — two raters can "agree" 95% of the time by both
+just saying "pass" almost always, with zero real signal, whenever most
+cases are easy. Kappa corrects for that using the judge's and human's own
+pass-rate marginals, broken down overall and per rubric so you can see
+which rubrics the judge is well-calibrated on and which are noise. It also
+sweeps `Score.value` cutoffs to suggest a threshold that agrees with your
+labels better than the judge's own `passed` call, when one exists.
+`--label` and `--report` combine in one invocation; `--report` alone
+prints to stdout, `--report path.md` writes a file.
 
 ## License
 
