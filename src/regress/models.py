@@ -1,8 +1,8 @@
 """Data model per CLAUDE.md's minimum schema.
 
 Phase 1 implements `traces`, `spans`, and `messages`. Phase 3 adds `scores`.
-Phase 4 adds `issues`/`issue_traces`. Phase 5 adds `evals`. `labels` lands
-later (Phase 6, Calibrator).
+Phase 4 adds `issues`/`issue_traces`. Phase 5 adds `evals`. Phase 6 adds
+`labels`, completing the minimum schema.
 """
 
 from __future__ import annotations
@@ -122,6 +122,7 @@ class Score(Base):
 
     span: Mapped[Span | None] = relationship(back_populates="scores")
     trace: Mapped[Trace | None] = relationship(back_populates="scores")
+    labels: Mapped[list[Label]] = relationship(back_populates="score", cascade="all, delete-orphan")
 
 
 class Issue(Base):
@@ -190,3 +191,27 @@ class Eval(Base):
     )
 
     issue: Mapped[Issue] = relationship(back_populates="evals")
+
+
+class Label(Base):
+    """A human's independent verdict on a Score, for calibrating the judge.
+
+    Only meaningful against judge-sourced scores — deterministic checks
+    have no ambiguity to calibrate. `human_value` is the human's
+    pass/fail call on the same case the judge scored; Cohen's kappa
+    between this and `Score.passed` is the Calibrator's headline number.
+    Multiple labelers can label the same score (each gets their own row),
+    which is what makes disagreement-among-humans visible too.
+    """
+
+    __tablename__ = "labels"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    score_id: Mapped[str] = mapped_column(String, ForeignKey("scores.id"), index=True)
+    human_value: Mapped[bool] = mapped_column()
+    labeler: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    score: Mapped[Score] = relationship(back_populates="labels")
