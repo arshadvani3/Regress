@@ -279,5 +279,92 @@ def run(evals_dir: Path, against: str, gate: bool, alpha: float) -> None:
     save_baseline(evals_dir, result)
 
 
+@main.command()
+@click.option(
+    "--label",
+    "label_n",
+    type=int,
+    default=None,
+    help="Sample and interactively hand-label N judge verdicts.",
+)
+@click.option(
+    "--labeler",
+    default=None,
+    help="Name/email to record with each label (defaults to $USER).",
+)
+@click.option(
+    "--include-labeled",
+    is_flag=True,
+    default=False,
+    help="When sampling, include scores that already have a label from you "
+    "(useful for measuring inter-labeler agreement).",
+)
+@click.option(
+    "--report",
+    "report_target",
+    is_flag=False,
+    flag_value="-",
+    default=None,
+    help="Compute Cohen's kappa + a threshold suggestion. Bare --report prints "
+    "the markdown report to stdout; --report PATH writes it to a file.",
+)
+def calibrate(
+    label_n: int | None, labeler: str | None, include_labeled: bool, report_target: str | None
+) -> None:
+    """Hand-label judge verdicts and report judge-vs-human agreement.
+
+    With --label N: sample N judge-sourced scores (stratified by rubric)
+    and prompt for a pass/fail call on each. With --report: compute Cohen's
+    kappa (overall and by rubric) and a threshold suggestion from whatever
+    has been labeled so far. Both can be combined in one run.
+    """
+    import os
+
+    from regress.calibrate.collect import labeled_judge_scores, to_labeled_pairs, to_valued_pairs
+    from regress.calibrate.kappa import kappa_by_rubric
+    from regress.calibrate.report import render_report
+    from regress.calibrate.sample import sample_judge_scores
+    from regress.calibrate.threshold import suggest_threshold
+    from regress.db import get_session, init_db
+    from regress.models import Label, Score
+    from regress.scoring import output_text
+
+    if label_n is None and report_target is None:
+        raise click.ClickException("Pass --label N and/or --report.")
+
+    init_db()
+    with get_session() as session:
+        if label_n is not None:
+            who = labeler or os.environ.get("USER", "unknown")
+            all_scores = list(session.execute(select(Score)).scalars().all())
+            sample = sample_judge_scores(all_scores, label_n, include_labeled=include_labeled)
+
+            if not sample:
+                click.echo("No unlabeled judge-sourced scores to sample from.")
+            for i, score in enumerate(sample, start=1):
+                click.echo(f"\n[{i}/{len(sample)}] rubric: {score.rubric}")
+                if score.span is not None:
+                    click.echo(f"  output: {output_text(score.span)}")
+                click.echo(f"  judge verdict: {'PASS' if score.passed else 'FAIL'} "
+                           f"(score={score.value:.2f}) — {score.reasoning}")
+                human_value = click.confirm("  Does this response actually pass?")
+                session.add(Label(score_id=score.id, human_value=human_value, labeler=who))
+            session.commit()
+            if sample:
+                click.echo(f"\nRecorded {len(sample)} label(s).")
+
+        if report_target is not None:
+            scores = labeled_judge_scores(session)
+            kappa_result = kappa_by_rubric(to_labeled_pairs(scores))
+            threshold = suggest_threshold(to_valued_pairs(scores))
+            report_text = render_report(kappa_result, threshold)
+
+            if report_target == "-":
+                click.echo("\n" + report_text)
+            else:
+                Path(report_target).write_text(report_text)
+                click.echo(f"\nWrote report to {report_target}")
+
+
 if __name__ == "__main__":
     main()
