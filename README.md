@@ -11,7 +11,7 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 6).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 7).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
@@ -30,8 +30,10 @@ production trace → clustered failure → tracked issue → auto-generated eval
 > only on a statistically significant regression. `regress calibrate` samples
 > judge verdicts for hand-labeling, computes Cohen's kappa judge-vs-human
 > (overall and per rubric), and suggests a `score` threshold that would
-> agree with humans better than the judge's own pass/fail call. See
-> [MASTER_PLAN](#roadmap) for what's built vs. planned.
+> agree with humans better than the judge's own pass/fail call. A React
+> dashboard — trace explorer, issue kanban, calibration view — is served
+> as static files by the same `regress up` process, backed by a read-only
+> `/api/*` JSON API. See [MASTER_PLAN](#roadmap) for what's built vs. planned.
 
 ## Quickstart
 
@@ -117,7 +119,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, lifecycle states.
 - [x] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
 - [x] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
-- [ ] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
+- [x] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
 - [ ] **Phase 8 — Dogfood + case study.** Real numbers in `docs/case-study.md`.
 
 ## Non-goals (v0)
@@ -135,6 +137,21 @@ pytest
 ruff check .
 mypy src
 ```
+
+The dashboard (`dashboard/`, Vite + React + TypeScript + Tailwind) is a
+separate npm project that builds into `src/regress/dashboard_dist/`, which
+`regress up` serves as static files when present:
+
+```bash
+cd dashboard
+npm install
+npm run dev      # Vite dev server on :5173, proxies /api and /health to :8990
+npm run build    # writes src/regress/dashboard_dist/ for `regress up` to serve
+```
+
+Run `regress up` in one terminal and `npm run dev` in another for hot
+reload; `npm run build` + plain `regress up` is enough to check the
+production build.
 
 To try ingestion today, point any OTLP/HTTP exporter at `regress up`'s
 `/v1/traces` endpoint (protobuf or JSON, following the [OpenTelemetry GenAI
@@ -323,6 +340,24 @@ sweeps `Score.value` cutoffs to suggest a threshold that agrees with your
 labels better than the judge's own `passed` call, when one exists.
 `--label` and `--report` combine in one invocation; `--report` alone
 prints to stdout, `--report path.md` writes a file.
+
+Everything above is also in the dashboard. `regress up` serves it at
+`http://localhost:8990` — no separate frontend process, no build step for
+end users (it ships prebuilt in the wheel). Three views:
+
+- **Traces** — a sortable list, click through to a trace's full span/message
+  timeline with every score inline.
+- **Issues** — a kanban board grouped by lifecycle state (active / regressed
+  / resolved); each card links to its member traces and any generated eval
+  files.
+- **Calibration** — the same labeling flow as `regress calibrate --label`
+  (pass/fail on a sampled judge verdict) and the same kappa/threshold report
+  as `--report`, kept in sync by sharing the exact same `regress.calibrate.*`
+  code the CLI uses.
+
+The dashboard talks to a read-only JSON API under `/api/*`
+(`src/regress/api/`); the only write route is `POST /api/labels`, the
+browser equivalent of `regress calibrate --label`.
 
 ## License
 
