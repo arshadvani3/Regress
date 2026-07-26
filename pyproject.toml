@@ -63,6 +63,11 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/regress"]
+# dashboard_dist/ is a build artifact (gitignored, produced by `npm run
+# build` in dashboard/), not tracked source — hatchling's default VCS-aware
+# file selection skips gitignored paths even when present on disk, so it
+# needs an explicit artifacts entry to end up in the wheel.
+artifacts = ["src/regress/dashboard_dist/**"]
 
 # CPython on this platform treats leading-underscore .pth filenames as
 # hidden and skips them at startup, which breaks hatchling's default

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -81,7 +82,21 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     app.include_router(make_router(session_factory))
 
     if _DASHBOARD_DIST.is_dir():
-        app.mount("/", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+        app.mount(
+            "/assets", StaticFiles(directory=_DASHBOARD_DIST / "assets"), name="dashboard-assets"
+        )
+
+        index_html = _DASHBOARD_DIST / "index.html"
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def dashboard_spa(full_path: str) -> Response:
+            # React Router owns everything not already handled above (API,
+            # health, ingest, /assets) — serve index.html for any of those
+            # paths so a hard refresh on e.g. /traces/abc still works.
+            candidate = _DASHBOARD_DIST / full_path
+            if full_path and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(index_html)
 
     return app
 
