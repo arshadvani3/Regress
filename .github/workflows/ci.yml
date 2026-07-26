@@ -32,3 +32,23 @@ jobs:
 
       - name: Test with pytest
         run: pytest --cov=regress --cov-report=term-missing
+
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Type check + build
+        working-directory: dashboard
+        run: npm run build
