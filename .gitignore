@@ -17,3 +17,5 @@ htmlcov/
 *.sqlite3
 node_modules/
 .DS_Store
+src/regress/dashboard_dist/
+dashboard/*.tsbuildinfo
