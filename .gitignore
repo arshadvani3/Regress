@@ -19,3 +19,7 @@ node_modules/
 .DS_Store
 src/regress/dashboard_dist/
 dashboard/*.tsbuildinfo
+
+# Local project instructions / agent config — not for the public repo
+CLAUDE.md
+.claude/
