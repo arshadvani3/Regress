@@ -11,7 +11,7 @@ production trace → clustered failure → tracked issue → auto-generated eval
 
 ...as a single self-hostable tool you can adopt in under 5 minutes.
 
-> **Status: pre-alpha (Phase 7).** The architecture below is the target shape.
+> **Status: pre-alpha (Phase 8 — all phases built).** The architecture below is the target shape.
 > Today `regress up` serves a health check and a real OTLP/HTTP ingest
 > endpoint (`POST /v1/traces`, protobuf or JSON) that parses GenAI semantic
 > convention spans into SQLite. `regress traces` lists what's been ingested.
@@ -85,6 +85,19 @@ YAML until you want it.
      shipped as a reusable GitHub Action (.github/actions/gate)
 ```
 
+## Does it actually work? (case study)
+
+Run end to end against a real [LlamaIndex](https://github.com/run-llama/llama_index)
+RAG over [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/): 100 questions →
+**200 traces**, `regress score` found **21 real failures** (79% answer
+accuracy vs. gold), `regress cluster` grouped them into **2 auto-titled
+Issues**, `regress evalgen` produced **8 regression cases**, and the CI gate
+caught a deliberately-degraded RAG (79% → 47% pass) as a significant
+regression (**p < 0.00001**) while correctly ignoring a 4-point noise drop.
+Judge-vs-human calibration came out at **Cohen's κ = 0.435**. Full write-up,
+including a bug the dogfood found in Regress itself:
+**[docs/case-study.md](docs/case-study.md)**.
+
 ## Why not just Langfuse / Braintrust / \<observability vendor\>?
 
 Those tools are excellent at the first half of the loop: capturing traces and
@@ -120,7 +133,7 @@ Tracking against the MASTER_PLAN in `CLAUDE.md`:
 - [x] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action. (v0.1.0)
 - [x] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
 - [x] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view. (v0.2.0)
-- [ ] **Phase 8 — Dogfood + case study.** Real numbers in `docs/case-study.md`.
+- [x] **Phase 8 — Dogfood + case study.** Full loop run against a LlamaIndex RAG over SQuAD — real numbers in [docs/case-study.md](docs/case-study.md).
 
 ## Non-goals (v0)
 
