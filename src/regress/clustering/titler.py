@@ -48,6 +48,14 @@ def title_cluster(
 
     try:
         payload = json.loads(raw)
+        # Models sometimes "helpfully" return a JSON array of title/description
+        # objects (one per example failure) instead of the single object asked
+        # for. Coalesce to the first object rather than failing the whole
+        # cluster — a title is a title.
+        if isinstance(payload, list):
+            if not payload:
+                raise TitlerError(f"titler returned an empty list: {raw!r}")
+            payload = payload[0]
         title = str(payload["title"])
         description = str(payload["description"])
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
