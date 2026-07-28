@@ -108,6 +108,8 @@ Six stages, one command each:
 | Gate | `regress run --gate` | Fail CI on a *significant* regression |
 | Calibrate | `regress calibrate` | Measure how much to trust the judge |
 
+→ **[Full walkthrough with the reasoning behind each stage](docs/how-it-works.md)** (plus an interactive visual version).
+
 ---
 
 ## Usage
