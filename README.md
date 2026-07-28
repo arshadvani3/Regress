@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![CI](https://github.com/arshadvani3/Regress/actions/workflows/ci.yml/badge.svg)](https://github.com/arshadvani3/Regress/actions/workflows/ci.yml)
-[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#roadmap)
+[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status--whats-next)
 
 </div>
 
@@ -189,19 +189,21 @@ No hosted/multi-tenant SaaS, no auth beyond a single optional bearer token, no
 prompt-management/playground features, no fine-tuning loops, no non-GenAI OTel
 traffic, no Kubernetes manifests. The scope is intentional.
 
-## Roadmap
+## Status & what's next
 
-All eight phases are built. **Status: pre-alpha** — the loop works end to end
-(see the [case study](docs/case-study.md)), APIs may still shift.
+**Pre-alpha.** The full loop — ingest → score → cluster → evalgen → gate →
+calibrate, plus the dashboard — works end to end, proven against a real
+LlamaIndex RAG (see the [case study](docs/case-study.md)). It's a self-hosted
+single-node tool today; public APIs may still shift.
 
-- [x] **Phase 0–1 — Skeleton + Ingest.** OTLP endpoint, GenAI parsing, SQLite.
-- [x] **Phase 2 — `instrument()` SDK.** Patch openai + anthropic, `@task`, `feedback()`.
-- [x] **Phase 3 — Scorer.** Deterministic checks + LLM-judge with stored rubrics.
-- [x] **Phase 4 — Clusterer + Issues.** Embeddings, HDBSCAN, `regressed` detection.
-- [x] **Phase 5 — EvalGen + CI gate.** YAML evals, `regress run`, GitHub Action.
-- [x] **Phase 6 — Calibrator.** Labeling flow, judge-vs-human kappa report.
-- [x] **Phase 7 — Dashboard.** Trace explorer, issue kanban, calibration view.
-- [x] **Phase 8 — Dogfood + case study.** [Real numbers](docs/case-study.md).
+Where it goes from here:
+
+- **Postgres + pgvector** for teams past the single-node SQLite default —
+  the storage layer is already abstracted behind `REGRESS_DB_URL`.
+- **Streaming-completion capture** in `instrument()`, so token-streamed
+  responses are traced without forcing non-streaming.
+- **More judge backends** beyond OpenAI-compatible — the judge is a thin
+  provider-agnostic client, so Anthropic/Bedrock/local slot in cleanly.
 
 ## Contributing
 
