@@ -64,6 +64,13 @@ feedback(trace_id=trace_id, score=0.0, comment="wrong refund policy")
 trace. `feedback()` attaches a human score to a trace after the fact. See
 [examples/quickstart.py](../examples/quickstart.py) for a runnable version.
 
+**Streaming works too.** `create(..., stream=True)` is captured transparently:
+the streamed chunks are reassembled into one span (text, finish reason, and
+token usage when the caller passes `stream_options={"include_usage": True}`),
+emitted when the stream finishes. Your code is untouched — every chunk still
+flows to you unchanged, and `with stream as s:` / `.close()` still work. Sync
+and async streams are both handled.
+
 **Option B — any OTLP exporter.** Already exporting OTel GenAI spans (Langfuse,
 the OTel SDK, etc.)? Point it at `regress up` and skip `instrument()` entirely:
 

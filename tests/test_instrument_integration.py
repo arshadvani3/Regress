@@ -1,6 +1,8 @@
 """End-to-end: instrument() -> OTLP export -> /v1/traces -> stored trace."""
 
 from collections.abc import Iterator
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import openai
@@ -90,3 +92,40 @@ def test_instrumented_openai_call_is_ingested_with_messages(
         messages = list(span.messages)
         assert any(m.direction == "input" and m.role == "user" for m in messages)
         assert any(m.direction == "output" and m.role == "assistant" for m in messages)
+
+
+def test_instrumented_streaming_openai_call_is_ingested_with_reassembled_output(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient, engine: Engine
+) -> None:
+    instrument()
+
+    def _chunk(content: str, finish_reason: str | None = None) -> SimpleNamespace:
+        delta = SimpleNamespace(role="assistant", content=content)
+        choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+        return SimpleNamespace(model="gpt-4o-mini-2024", choices=[choice], usage=None)
+
+    def fake_post(self: Any, *a: Any, **kw: Any) -> Any:
+        if kw.get("stream"):
+            return iter([_chunk("Hel"), _chunk("lo"), _chunk("!", finish_reason="stop")])
+        return MagicMock()
+
+    monkeypatch.setattr(openai.OpenAI, "post", fake_post)
+
+    sdk_client = openai.OpenAI(api_key="sk-fake")
+    stream = sdk_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "greet me"}],
+        stream=True,
+    )
+    received = list(stream)  # caller still gets every chunk
+
+    assert len(received) == 3
+    with Session(engine) as session:
+        span = session.execute(select(Span)).scalar_one()
+        assert span.gen_ai_provider_name == "openai"
+        assert span.request_model == "gpt-4o-mini"
+        assert span.response_model == "gpt-4o-mini-2024"
+        output_msgs = [m for m in span.messages if m.direction == "output"]
+        assert len(output_msgs) == 1
+        parts = output_msgs[0].content["parts"]
+        assert parts[0]["content"] == "Hello!"

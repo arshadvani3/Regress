@@ -146,6 +146,271 @@ def _anthropic_usage(response: Any) -> tuple[int | None, int | None]:
     return getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
 
 
+class _StreamAccumulator:
+    """Reassembles a streamed response into the same shape a non-streamed one
+    has, so a span from `stream=True` looks identical to one from a normal call
+    downstream. Provider-agnostic: `_consume_chunk` folds each chunk into the
+    running text / role / finish_reason / usage, and `synthetic_response`
+    exposes them through the same attribute names `_extract_*`/`*_usage` read.
+    """
+
+    def __init__(self, provider: str) -> None:
+        self.provider = provider
+        self._text = ""
+        self._role = "assistant"
+        self._finish_reason: str | None = None
+        self._model: str | None = None
+        self._input_tokens: int | None = None
+        self._output_tokens: int | None = None
+
+    def consume(self, chunk: Any) -> None:
+        if getattr(chunk, "model", None):
+            self._model = chunk.model
+        if self.provider == "openai":
+            self._consume_openai(chunk)
+        else:
+            self._consume_anthropic(chunk)
+
+    def _consume_openai(self, chunk: Any) -> None:
+        for choice in getattr(chunk, "choices", None) or []:
+            delta = getattr(choice, "delta", None)
+            if delta is not None:
+                if getattr(delta, "role", None):
+                    self._role = delta.role
+                if getattr(delta, "content", None):
+                    self._text += delta.content
+            if getattr(choice, "finish_reason", None):
+                self._finish_reason = choice.finish_reason
+        # Usage only arrives (in a final chunk) when the caller passes
+        # stream_options={"include_usage": True}; absent otherwise.
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            self._input_tokens = getattr(usage, "prompt_tokens", None)
+            self._output_tokens = getattr(usage, "completion_tokens", None)
+
+    def _consume_anthropic(self, chunk: Any) -> None:
+        # Anthropic streams typed events: message_start carries role + input
+        # tokens, content_block_delta carries text, message_delta carries the
+        # stop_reason and cumulative output tokens.
+        event_type = getattr(chunk, "type", None)
+        if event_type == "message_start":
+            message = getattr(chunk, "message", None)
+            if message is not None:
+                self._role = getattr(message, "role", self._role)
+                if getattr(message, "model", None):
+                    self._model = message.model
+                usage = getattr(message, "usage", None)
+                if usage is not None:
+                    self._input_tokens = getattr(usage, "input_tokens", None)
+        elif event_type == "content_block_delta":
+            delta = getattr(chunk, "delta", None)
+            if delta is not None and getattr(delta, "text", None):
+                self._text += delta.text
+        elif event_type == "message_delta":
+            delta = getattr(chunk, "delta", None)
+            if delta is not None and getattr(delta, "stop_reason", None):
+                self._finish_reason = delta.stop_reason
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                self._output_tokens = getattr(usage, "output_tokens", None)
+
+    def output_messages(self) -> list[dict[str, object]]:
+        return [
+            {
+                "role": self._role,
+                "parts": [{"content": self._text}],
+                "finish_reason": self._finish_reason,
+            }
+        ]
+
+    @property
+    def model(self) -> str | None:
+        return self._model
+
+    def usage(self) -> tuple[int | None, int | None]:
+        return self._input_tokens, self._output_tokens
+
+
+def _emit_streamed_span(
+    *,
+    provider: str,
+    request_model: str | None,
+    input_messages: list[dict[str, object]],
+    started_at: datetime,
+    accumulator: _StreamAccumulator,
+    status: str,
+    error_type: str | None,
+    trace_id: str,
+    span_id: str,
+    parent_span_id: str | None,
+) -> None:
+    """Emit a span from an accumulated stream, using whatever was collected
+    before the stream ended (a partial output on an early close or mid-stream
+    error is better than none)."""
+    attrs: dict[str, object] = {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": provider,
+        "gen_ai.request.model": request_model,
+        "gen_ai.input.messages": input_messages,
+        "gen_ai.response.model": accumulator.model,
+        "gen_ai.output.messages": accumulator.output_messages(),
+    }
+    input_tokens, output_tokens = accumulator.usage()
+    if input_tokens is not None:
+        attrs["gen_ai.usage.input_tokens"] = input_tokens
+    if output_tokens is not None:
+        attrs["gen_ai.usage.output_tokens"] = output_tokens
+
+    _emit(
+        SpanData(
+            name=f"chat {request_model or provider}",
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            started_at=started_at,
+            ended_at=datetime.now(UTC),
+            attributes=attrs,
+            status=status,
+            error_type=error_type,
+        )
+    )
+
+
+class _SpanContext:
+    """The per-call span metadata a stream proxy needs to emit its span."""
+
+    __slots__ = (
+        "provider",
+        "request_model",
+        "input_messages",
+        "started_at",
+        "trace_id",
+        "span_id",
+        "parent_span_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        request_model: str | None,
+        input_messages: list[dict[str, object]],
+        started_at: datetime,
+        trace_id: str,
+        span_id: str,
+        parent_span_id: str | None,
+    ) -> None:
+        self.provider = provider
+        self.request_model = request_model
+        self.input_messages = input_messages
+        self.started_at = started_at
+        self.trace_id = trace_id
+        self.span_id = span_id
+        self.parent_span_id = parent_span_id
+
+
+class _StreamProxy:
+    """Transparent wrapper around an SDK stream object.
+
+    Delegates every attribute (`.close()`, `.response`, context-manager
+    protocol, ...) to the real stream, so no caller pattern breaks -- but
+    intercepts iteration to accumulate the streamed chunks and emit exactly
+    one span when the stream is exhausted, closed, or errors. One span per
+    call, emitted once, whichever of those ends the stream first.
+    """
+
+    def __init__(self, stream: Any, ctx: _SpanContext) -> None:
+        self._regress_stream = stream
+        self._regress_ctx = ctx
+        self._regress_acc = _StreamAccumulator(ctx.provider)
+        self._regress_emitted = False
+        self._regress_status = "ok"
+        self._regress_error_type: str | None = None
+
+    def _regress_emit(self) -> None:
+        if self._regress_emitted:
+            return
+        self._regress_emitted = True
+        ctx = self._regress_ctx
+        _emit_streamed_span(
+            provider=ctx.provider,
+            request_model=ctx.request_model,
+            input_messages=ctx.input_messages,
+            started_at=ctx.started_at,
+            accumulator=self._regress_acc,
+            status=self._regress_status,
+            error_type=self._regress_error_type,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            parent_span_id=ctx.parent_span_id,
+        )
+
+    # --- sync iteration ---
+    def __iter__(self) -> _StreamProxy:
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            chunk = next(self._regress_stream)
+        except StopIteration:
+            self._regress_emit()
+            raise
+        except Exception as exc:
+            self._regress_status, self._regress_error_type = "error", type(exc).__name__
+            self._regress_emit()
+            raise
+        self._regress_acc.consume(chunk)
+        return chunk
+
+    # --- async iteration ---
+    def __aiter__(self) -> _StreamProxy:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            chunk = await self._regress_stream.__anext__()
+        except StopAsyncIteration:
+            self._regress_emit()
+            raise
+        except Exception as exc:
+            self._regress_status, self._regress_error_type = "error", type(exc).__name__
+            self._regress_emit()
+            raise
+        self._regress_acc.consume(chunk)
+        return chunk
+
+    # --- context managers: delegate, but still emit on exit ---
+    def __enter__(self) -> _StreamProxy:
+        self._regress_stream.__enter__()
+        return self
+
+    def __exit__(self, *exc: Any) -> Any:
+        try:
+            return self._regress_stream.__exit__(*exc)
+        finally:
+            self._regress_emit()
+
+    async def __aenter__(self) -> _StreamProxy:
+        await self._regress_stream.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> Any:
+        try:
+            return await self._regress_stream.__aexit__(*exc)
+        finally:
+            self._regress_emit()
+
+    # --- everything else: delegate to the real stream ---
+    def __getattr__(self, name: str) -> Any:
+        # Our own attributes are set in __init__ and resolve normally, so
+        # __getattr__ only fires for the wrapped stream's API. Guard the
+        # private names anyway to avoid infinite recursion if one is looked
+        # up before __init__ finishes.
+        if name.startswith("_regress_"):
+            raise AttributeError(name)
+        return getattr(self._regress_stream, name)
+
+
 def _wrap_sync(
     original: Callable[..., Any],
     *,
@@ -163,11 +428,8 @@ def _wrap_sync(
         status, error_type, response = "ok", None, None
         try:
             response = original(self, *args, **kwargs)
-            return response
         except Exception as exc:
             status, error_type = "error", type(exc).__name__
-            raise
-        finally:
             _emit(
                 _build_span(
                     operation="chat",
@@ -176,7 +438,7 @@ def _wrap_sync(
                     input_messages=extract_input(kwargs),
                     started_at=started_at,
                     ended_at=datetime.now(UTC),
-                    response=response,
+                    response=None,
                     response_model=lambda r: getattr(r, "model", None),
                     extract_output=extract_output,
                     usage=usage,
@@ -187,6 +449,42 @@ def _wrap_sync(
                     parent_span_id=parent_span_id,
                 )
             )
+            raise
+
+        if kwargs.get("stream"):
+            return _StreamProxy(
+                response,
+                _SpanContext(
+                    provider=provider,
+                    request_model=kwargs.get("model"),
+                    input_messages=extract_input(kwargs),
+                    started_at=started_at,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=parent_span_id,
+                ),
+            )
+
+        _emit(
+            _build_span(
+                operation="chat",
+                provider=provider,
+                request_model=kwargs.get("model"),
+                input_messages=extract_input(kwargs),
+                started_at=started_at,
+                ended_at=datetime.now(UTC),
+                response=response,
+                response_model=lambda r: getattr(r, "model", None),
+                extract_output=extract_output,
+                usage=usage,
+                status=status,
+                error_type=error_type,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+            )
+        )
+        return response
 
     return patched
 
@@ -208,11 +506,8 @@ def _wrap_async(
         status, error_type, response = "ok", None, None
         try:
             response = await original(self, *args, **kwargs)
-            return response
         except Exception as exc:
             status, error_type = "error", type(exc).__name__
-            raise
-        finally:
             _emit(
                 _build_span(
                     operation="chat",
@@ -221,7 +516,7 @@ def _wrap_async(
                     input_messages=extract_input(kwargs),
                     started_at=started_at,
                     ended_at=datetime.now(UTC),
-                    response=response,
+                    response=None,
                     response_model=lambda r: getattr(r, "model", None),
                     extract_output=extract_output,
                     usage=usage,
@@ -232,6 +527,42 @@ def _wrap_async(
                     parent_span_id=parent_span_id,
                 )
             )
+            raise
+
+        if kwargs.get("stream"):
+            return _StreamProxy(
+                response,
+                _SpanContext(
+                    provider=provider,
+                    request_model=kwargs.get("model"),
+                    input_messages=extract_input(kwargs),
+                    started_at=started_at,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=parent_span_id,
+                ),
+            )
+
+        _emit(
+            _build_span(
+                operation="chat",
+                provider=provider,
+                request_model=kwargs.get("model"),
+                input_messages=extract_input(kwargs),
+                started_at=started_at,
+                ended_at=datetime.now(UTC),
+                response=response,
+                response_model=lambda r: getattr(r, "model", None),
+                extract_output=extract_output,
+                usage=usage,
+                status=status,
+                error_type=error_type,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+            )
+        )
+        return response
 
     return patched
 
