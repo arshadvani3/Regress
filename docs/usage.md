@@ -390,6 +390,8 @@ the only write route is `POST /api/labels`, the browser equivalent of
 | `REGRESS_JUDGE_API_KEY` | Judge model API key (falls back to `OPENAI_API_KEY`) | — |
 | `REGRESS_JUDGE_BASE_URL` | Judge endpoint when no `regress.yaml` sets one (e.g. a local Ollama) | `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | Used by `instrument()`-patched calls and the judge | — |
+| `REGRESS_AUTH_TOKEN` | When set, requires this bearer token on the API + ingest (see below) | — (open) |
+| `REGRESS_SANITIZE_INGEST` | When truthy, redacts PII from trace text *before* it's stored (see below) | — (off) |
 
 `regress.yaml` (all keys optional):
 
@@ -404,3 +406,39 @@ checks:
     rubric: "<text>"        # judge_rubric only
     # ...plus any check-specific params (max_ms, cost thresholds, schema, etc.)
 ```
+
+## Deploying beyond localhost
+
+The defaults assume `regress up` runs on your own machine. Two knobs harden a
+shared or remote collector; both are off by default so the local flow is
+untouched.
+
+**Require a bearer token.** Set `REGRESS_AUTH_TOKEN` and every request to the
+ingest endpoint (`/v1/...`) and the read API (`/api/...`) must carry it:
+
+```bash
+export REGRESS_AUTH_TOKEN=$(openssl rand -hex 24)
+regress up                       # collector now demands the token
+```
+
+Set the *same* env var in your instrumented app and `instrument()` attaches
+it to every exported batch automatically — no code change:
+
+```bash
+REGRESS_AUTH_TOKEN=<token> python your_app.py
+```
+
+`/health` and the static dashboard stay open (so liveness probes and the SPA
+shell still load). This is a single shared secret for a self-hosted collector,
+not a login system — multi-user auth is a deliberate non-goal.
+
+**Redact PII at ingest.** By default Regress stores trace text verbatim (it's
+your data, on your disk). On a shared deployment, set `REGRESS_SANITIZE_INGEST=1`
+and emails, phone numbers, and likely API keys are redacted *before* anything
+is written — a stronger guarantee than the sanitize pass that already runs when
+a trace becomes an eval. It's regex-based best-effort redaction, not a promise
+of complete PII removal.
+
+**SQLite concurrency.** File-backed SQLite runs in WAL mode automatically, so
+the dashboard's reads don't stall while ingest is writing. Nothing to
+configure; for real multi-writer scale, point `REGRESS_DB_URL` at Postgres.

@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from regress.models import Message, Span, Trace
+from regress.sanitize import sanitize_message_content
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _sanitize_ingest_enabled() -> bool:
+    """Whether to redact PII from message text before it's persisted.
+
+    Off by default so the zero-config path stores traces verbatim (redaction
+    is lossy, and many users want the raw text locally). Operators running a
+    shared collector opt in with `REGRESS_SANITIZE_INGEST=1`, and then raw
+    emails/keys/phone numbers never touch the database — a stronger guarantee
+    than sanitizing only at eval-generation time.
+    """
+    return os.environ.get("REGRESS_SANITIZE_INGEST", "").strip().lower() in _TRUTHY
 
 
 def _as_aware(value: datetime | None) -> datetime | None:
@@ -64,8 +80,13 @@ def upsert_span(session: Session, span: Span, messages: list[Message]) -> Span:
 
 
 def store_parsed_spans(session: Session, parsed: list[tuple[Trace, Span, list[Message]]]) -> int:
+    sanitize = _sanitize_ingest_enabled()
     count = 0
     for trace, span, messages in parsed:
+        if sanitize:
+            for message in messages:
+                if isinstance(message.content, dict):
+                    message.content = sanitize_message_content(message.content)
         upsert_trace(session, trace)
         upsert_span(session, span, messages)
         count += 1
