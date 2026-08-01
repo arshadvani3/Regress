@@ -105,6 +105,24 @@ def test_export_spans_posts_protobuf_to_endpoint(monkeypatch: pytest.MonkeyPatch
     url, kwargs = calls[0]
     assert url == "http://example.test/v1/traces"
     assert kwargs["headers"]["content-type"] == "application/x-protobuf"
+    # No token in the env -> no authorization header (default open collector).
+    assert "authorization" not in kwargs["headers"]
+
+
+def test_export_spans_attaches_bearer_token_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(200)
+
+    monkeypatch.setattr("regress._otlp_export.httpx.post", fake_post)
+    monkeypatch.setenv("REGRESS_AUTH_TOKEN", "tok-123")
+
+    export_spans([_sample_span()], endpoint="http://example.test/v1/traces")
+
+    _, kwargs = calls[0]
+    assert kwargs["headers"]["authorization"] == "Bearer tok-123"
 
 
 def test_export_spans_is_noop_for_empty_list(monkeypatch: pytest.MonkeyPatch) -> None:

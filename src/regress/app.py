@@ -7,12 +7,14 @@ process, one port" DX rule.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import hmac
+import os
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,6 +27,27 @@ from regress.ingest import OTLPParseError, iter_spans_from_request, parse_export
 from regress.store import store_parsed_spans
 
 _DASHBOARD_DIST = Path(__file__).parent / "dashboard_dist"
+
+# When REGRESS_AUTH_TOKEN is set, the bearer token guards the data plane —
+# ingest (`/v1/...`) and the read API (`/api/...`) — and nothing else. The
+# static dashboard shell, health, and API docs stay open so probes work and a
+# browser can load the SPA (which then attaches the token to its own fetches).
+# This is the "single optional bearer token" of CLAUDE.md's non-goals: a
+# shared-secret gate for a self-hosted collector, not a login system.
+_AUTH_PROTECTED_PREFIXES = ("/api", "/v1")
+
+
+def _extract_bearer(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token
+
+
+def _requires_auth(path: str) -> bool:
+    """True for paths guarded by the bearer token (the API/ingest data plane)."""
+    return path.startswith(_AUTH_PROTECTED_PREFIXES)
 
 
 def create_app(engine: Engine | None = None) -> FastAPI:
@@ -54,6 +77,25 @@ def create_app(engine: Engine | None = None) -> FastAPI:
         description="Your agent's production failures become its regression suite. Automatically.",
         version=__version__,
     )
+
+    auth_token = os.environ.get("REGRESS_AUTH_TOKEN") or None
+    if auth_token:
+
+        @app.middleware("http")
+        async def require_bearer_token(
+            request: Request, call_next: Callable[[Request], Awaitable[Response]]
+        ) -> Response:
+            if _requires_auth(request.url.path):
+                presented = _extract_bearer(request)
+                # hmac.compare_digest keeps the check constant-time so a wrong
+                # token can't be recovered by timing the response.
+                if presented is None or not hmac.compare_digest(presented, auth_token):
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "missing or invalid bearer token"},
+                        headers={"www-authenticate": "Bearer"},
+                    )
+            return await call_next(request)
 
     @app.get("/health")
     def health() -> dict[str, str]:

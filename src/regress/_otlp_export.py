@@ -156,11 +156,17 @@ def export_spans(
         return
     target = endpoint or os.environ.get("REGRESS_ENDPOINT", DEFAULT_ENDPOINT)
     request = build_export_request(spans, service_name)
+    headers = {"content-type": "application/x-protobuf"}
+    # Same env var that guards the collector lets instrument() reach a
+    # token-protected one, with no extra config to wire through.
+    auth_token = os.environ.get("REGRESS_AUTH_TOKEN")
+    if auth_token:
+        headers["authorization"] = f"Bearer {auth_token}"
     try:
         httpx.post(
             target,
             content=request.SerializeToString(),
-            headers={"content-type": "application/x-protobuf"},
+            headers=headers,
             timeout=timeout,
         )
     except httpx.HTTPError:
