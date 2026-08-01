@@ -125,9 +125,11 @@ instrument()   # every openai/anthropic call now exports a trace
 ```
 
 **Score** — deterministic checks + an optional LLM-judge, configured in an
-optional `regress.yaml`:
+optional `regress.yaml` (`regress init` scaffolds one with a menu of
+ready-to-use rubrics):
 
 ```bash
+regress init                       # writes a starter regress.yaml
 regress score --config regress.yaml
 ```
 

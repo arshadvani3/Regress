@@ -5,6 +5,7 @@ The complete command reference. For the 30-second version, see the
 `regress` subcommand — run `regress --help` or `regress <cmd> --help` for the
 authoritative flag list.
 
+- [regress init](#regress-init)
 - [1. Ingest traces](#1-ingest-traces)
 - [2. Score](#2-score)
 - [3. Cluster into issues](#3-cluster-into-issues)
@@ -13,6 +14,26 @@ authoritative flag list.
 - [6. Calibrate the judge](#6-calibrate-the-judge)
 - [The dashboard](#the-dashboard)
 - [Configuration reference](#configuration-reference)
+
+---
+
+## regress init
+
+Scaffolds a starter `regress.yaml` in the current directory: the deterministic
+checks (`not_refusal`, `latency_under`) uncommented and ready to run, plus a
+menu of named judge rubrics commented out — uncomment the ones that fit your
+app instead of writing a rubric from scratch.
+
+```bash
+regress init
+regress init --path configs/regress.yaml   # write somewhere else
+regress init --force                       # overwrite an existing file
+```
+
+The rubric menu: `response_quality` (the same one the zero-config default
+uses), `answers_the_question`, `no_hallucination`, `stays_on_topic`,
+`not_toxic`, `follows_format`. Each is a complete, ready-to-use rubric string
+— delete the `#` and the two lines above it to enable one.
 
 ---
 

@@ -21,6 +21,37 @@ def main() -> None:
 
 
 @main.command()
+@click.option(
+    "--path",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Where to write the scaffold. Defaults to ./regress.yaml.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite an existing regress.yaml.",
+)
+def init(config_path: Path | None, force: bool) -> None:
+    """Scaffold a starter regress.yaml with a menu of ready-to-use rubrics."""
+    from regress.config import DEFAULT_CONFIG_PATH
+    from regress.templates import render_scaffold
+
+    target = config_path or DEFAULT_CONFIG_PATH
+    if target.exists() and not force:
+        raise click.ClickException(f"{target} already exists. Use --force to overwrite.")
+
+    target.write_text(render_scaffold())
+    click.echo(f"Wrote {target}")
+    click.echo(
+        "Deterministic checks (not_refusal, latency_under) are enabled. "
+        "Uncomment a judge rubric to add semantic checks, then run: regress score"
+    )
+
+
+@main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Bind host.")
 @click.option("--port", default=8990, show_default=True, help="Bind port.")
 @click.option("--reload", is_flag=True, default=False, help="Enable autoreload (development only).")
