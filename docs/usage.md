@@ -10,6 +10,7 @@ authoritative flag list.
 - [2. Score](#2-score)
 - [3. Cluster into issues](#3-cluster-into-issues)
 - [4. Generate evals](#4-generate-evals)
+- [regress analyze — do 2-4 in one step](#regress-analyze--do-2-4-in-one-step)
 - [5. Run + gate in CI](#5-run--gate-in-ci)
 - [6. Calibrate the judge](#6-calibrate-the-judge)
 - [The dashboard](#the-dashboard)
@@ -192,6 +193,34 @@ emails, phone numbers, API-key-shaped tokens, and common name introductions)
 before they ever touch a file. The generated YAML is the source of truth; the
 paired `test_<slug>.py` module is a thin shim so `pytest evals/` works
 standalone too.
+
+---
+
+## regress analyze — do 2-4 in one step
+
+Score, cluster, and evalgen are three separate commands so each one works
+standalone — but for the common path ("I just ingested traces, get me to
+evals"), `regress analyze` runs all three in sequence and prints one report:
+
+```bash
+regress analyze                              # score -> cluster -> evalgen
+regress analyze --config regress.yaml        # same --config as `regress score`
+regress analyze --min-cluster-size 5         # same flag as `regress cluster`
+regress analyze --dir tests/evals            # same --dir as `regress evalgen`
+```
+
+```
+Scored 12 span(s) against 2 check(s): 24 score(s), 4 failing.
+Clustered 4 scored-bad trace(s) into 1 cluster(s): 1 new, 0 updated, 0 regressed.
+Generated 1 eval(s) in evals/:
+  refuses-refund-requests-a1b2c3d4.yaml — 'Refuses valid refund requests' (4 case(s))
+```
+
+`regress cluster` and `regress evalgen` still work exactly as documented
+above if you want to run (or re-run) a step on its own — `analyze` is
+additive, not a replacement. It generates evals for **active** issues only,
+same as bare `regress evalgen` (no `--state` flag; use the standalone
+command for `--state all` or other states).
 
 ---
 

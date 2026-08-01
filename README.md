@@ -149,6 +149,8 @@ plus a pytest module (`pytest evals/` works with no server):
 regress evalgen
 ```
 
+> Or run score → cluster → evalgen in one shot: `regress analyze`.
+
 **Gate CI** — replay recorded traces, or hit your live app and block the deploy
 on a statistically significant drop (a two-proportion test, not a raw diff):
 

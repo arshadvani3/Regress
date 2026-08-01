@@ -251,6 +251,132 @@ def evalgen(evals_dir: Path, issue_state: str) -> None:
             )
 
 
+@main.command()
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to regress.yaml for the scoring step. Defaults to ./regress.yaml if "
+    "present, otherwise the zero-config default (see `regress score --help`).",
+)
+@click.option(
+    "--min-cluster-size",
+    default=3,
+    show_default=True,
+    help="Minimum number of similar failing traces to form a cluster.",
+)
+@click.option(
+    "--dir",
+    "evals_dir",
+    type=click.Path(path_type=Path),
+    default=Path("evals"),
+    show_default=True,
+    help="Directory to write generated eval YAML + pytest files into.",
+)
+def analyze(config_path: Path | None, min_cluster_size: int, evals_dir: Path) -> None:
+    """Run score, cluster, and evalgen in one step: traces in, evals out.
+
+    Equivalent to running `regress score`, `regress cluster`, and
+    `regress evalgen` in sequence -- each step still works standalone;
+    this just collapses the common path into one command.
+    """
+    from regress.clustering.run import run_clustering
+    from regress.config import ConfigError, load_config
+    from regress.db import get_session, init_db
+    from regress.evalgen.orchestrate import generate_evals_for_issues
+    from regress.models import Issue, Score, Span
+    from regress.scoring.run import score_spans
+
+    try:
+        config = load_config(config_path)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not config.checks:
+        click.echo("No checks configured. Add a regress.yaml or use the default not_refusal check.")
+        return
+
+    if config.used_zero_config_judge:
+        click.echo(
+            f"No regress.yaml found — running the built-in quality check "
+            f"(LLM judge, {config.judge_model}, ~1 API call/span). "
+            f"Add a regress.yaml to customize or silence."
+        )
+
+    init_db()
+    with get_session() as session:
+        already_scored = select(Score.span_id).where(Score.span_id.is_not(None))
+        spans = session.execute(select(Span).where(~Span.id.in_(already_scored))).scalars().all()
+
+        scored_count = 0
+        failed_count = 0
+        if spans:
+            errors: list[str] = []
+            rows = score_spans(
+                session,
+                list(spans),
+                config,
+                on_error=lambda span, check, exc: errors.append(f"{span.id}/{check.name}: {exc}"),
+            )
+            session.commit()
+            scored_count = len(spans)
+            failed_count = sum(1 for row in rows if row.passed is False)
+            click.echo(
+                f"Scored {scored_count} span(s) against {len(config.checks)} check(s): "
+                f"{len(rows)} score(s), {failed_count} failing."
+            )
+            for error in errors:
+                click.echo(f"  skipped: {error}")
+        else:
+            click.echo("Scored 0 span(s) (nothing new to score).")
+
+        try:
+            cluster_result = run_clustering(session, min_cluster_size=min_cluster_size)
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
+        session.commit()
+
+        if cluster_result.traces_considered < min_cluster_size:
+            click.echo(
+                f"Clustered: only {cluster_result.traces_considered} scored-bad trace(s) "
+                f"found (need at least {min_cluster_size}). Nothing to cluster yet."
+            )
+        else:
+            click.echo(
+                f"Clustered {cluster_result.traces_considered} scored-bad trace(s) into "
+                f"{cluster_result.clusters_found} cluster(s): "
+                f"{len(cluster_result.lifecycle.new_issues)} new, "
+                f"{len(cluster_result.lifecycle.updated_issues)} updated, "
+                f"{len(cluster_result.lifecycle.regressed_issues)} regressed."
+            )
+            for issue in cluster_result.lifecycle.regressed_issues:
+                click.echo(f"  REGRESSED: {issue.title!r} ({issue.id}) is failing again")
+            for error in cluster_result.titling_errors:
+                click.echo(f"  titling failed: {error}")
+
+        issues = list(
+            session.execute(select(Issue).where(Issue.state == "active")).scalars().all()
+        )
+        if not issues:
+            click.echo("Evals: no active issues to generate from.")
+            return
+
+        outcomes = generate_evals_for_issues(session, issues, directory=evals_dir)
+        session.commit()
+
+        if not outcomes:
+            click.echo("Evals: no evals generated — issues had no usable trace content.")
+            return
+
+        click.echo(f"Generated {len(outcomes)} eval(s) in {evals_dir}/:")
+        for outcome in outcomes:
+            click.echo(
+                f"  {outcome.yaml_path.name} — {outcome.issue_title!r} "
+                f"({outcome.case_count} case(s))"
+            )
+
+
 @main.command(name="run")
 @click.argument("evals_dir", type=click.Path(path_type=Path), default=Path("evals"))
 @click.option(
