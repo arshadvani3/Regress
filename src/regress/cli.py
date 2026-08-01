@@ -90,6 +90,13 @@ def score(config_path: Path | None, rescore: bool) -> None:
         click.echo("No checks configured. Add a regress.yaml or use the default not_refusal check.")
         return
 
+    if config.used_zero_config_judge:
+        click.echo(
+            f"No regress.yaml found — running the built-in quality check "
+            f"(LLM judge, {config.judge_model}, ~1 API call/span). "
+            f"Add a regress.yaml to customize or silence."
+        )
+
     init_db()
     with get_session() as session:
         query = select(Span)

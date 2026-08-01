@@ -131,6 +131,30 @@ def test_judge_client_prefers_regress_judge_api_key(monkeypatch: pytest.MonkeyPa
     assert client.api_key == "sk-regress-judge"
 
 
+def test_judge_client_uses_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGRESS_JUDGE_BASE_URL", "http://localhost:11434/v1")
+
+    client = JudgeClient()
+
+    assert client.base_url == "http://localhost:11434/v1"
+
+
+def test_judge_client_explicit_base_url_wins_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REGRESS_JUDGE_BASE_URL", "http://localhost:11434/v1")
+
+    client = JudgeClient(base_url="http://explicit:9999/v1")
+
+    assert client.base_url == "http://explicit:9999/v1"
+
+
+def test_judge_client_no_env_base_url_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REGRESS_JUDGE_BASE_URL", raising=False)
+
+    client = JudgeClient()
+
+    assert client.base_url == "https://api.openai.com/v1"
+
+
 def test_judge_client_sends_bearer_header_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = {}
 

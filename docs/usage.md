@@ -65,15 +65,28 @@ regress traces --limit 50
 
 ## 2. Score
 
-Two-tier scoring. With no config, `regress score` runs the zero-config
-`not_refusal` check against every unscored span:
+Two-tier scoring. With no `regress.yaml`, `regress score` always runs
+`not_refusal` (free, no LLM), and — if an API key is available
+(`OPENAI_API_KEY` or `REGRESS_JUDGE_API_KEY`) — also runs a built-in
+`response_quality` judge check, so a first run finds real failures even
+before you've written a rubric:
 
 ```bash
 regress score
 ```
 
-For anything else — schema validation, thresholds, or a judge rubric — add an
-optional `regress.yaml`:
+```
+No regress.yaml found — running the built-in quality check (LLM judge,
+gpt-4o-mini, ~1 API call/span). Add a regress.yaml to customize or silence.
+Scored 12 span(s) against 2 check(s): 24 score(s).
+```
+
+With no key set, zero-config runs `not_refusal` only — no LLM call, no cost,
+no notice. See [`regress init`](#regress-init) for scaffolding a
+`regress.yaml` with more rubrics to choose from.
+
+For anything else — schema validation, thresholds, or your own judge rubric —
+add an optional `regress.yaml`:
 
 ```yaml
 judge:
@@ -282,6 +295,7 @@ the only write route is `POST /api/labels`, the browser equivalent of
 | `REGRESS_DB_URL` | Storage backend | `sqlite:///regress.db` |
 | `REGRESS_ENDPOINT` | Where `instrument()` exports OTLP spans | `http://127.0.0.1:8990/v1/traces` |
 | `REGRESS_JUDGE_API_KEY` | Judge model API key (falls back to `OPENAI_API_KEY`) | — |
+| `REGRESS_JUDGE_BASE_URL` | Judge endpoint when no `regress.yaml` sets one (e.g. a local Ollama) | `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | Used by `instrument()`-patched calls and the judge | — |
 
 `regress.yaml` (all keys optional):

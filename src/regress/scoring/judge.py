@@ -47,6 +47,13 @@ class JudgeClient:
             self.api_key = os.environ.get("REGRESS_JUDGE_API_KEY") or os.environ.get(
                 "OPENAI_API_KEY"
             )
+        # Only applies when base_url is still the plain, uncustomized
+        # default -- an explicit base_url (e.g. from regress.yaml) always
+        # wins. Mirrors REGRESS_JUDGE_API_KEY: lets zero-config users (and
+        # tests) point the judge at a local/self-hosted endpoint, e.g.
+        # Ollama, without writing a config file.
+        if self.base_url == DEFAULT_BASE_URL:
+            self.base_url = os.environ.get("REGRESS_JUDGE_BASE_URL", DEFAULT_BASE_URL)
 
     def complete(self, *, system: str, user: str) -> str:
         headers = {"content-type": "application/json"}

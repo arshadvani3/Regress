@@ -1,6 +1,9 @@
+import json
 import os
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -11,20 +14,69 @@ from regress.models import Base, Message, Span, Trace
 SRC = str(Path(__file__).parent.parent / "src")
 
 
-def _subprocess_env(db_url: str) -> dict[str, str]:
+def _subprocess_env(
+    db_url: str, *, judge_api_key: str | None = None, judge_base_url: str | None = None
+) -> dict[str, str]:
     existing_path = os.environ.get("PYTHONPATH", "")
     python_path = f"{SRC}{os.pathsep}{existing_path}" if existing_path else SRC
-    return {**os.environ, "REGRESS_DB_URL": db_url, "PYTHONPATH": python_path}
+    env = {**os.environ, "REGRESS_DB_URL": db_url, "PYTHONPATH": python_path}
+    # The zero-config default only adds the built-in judge check when a key
+    # is present -- strip any inherited from the host shell so these tests
+    # are hermetic (no accidental real judge calls) unless a test opts in.
+    env.pop("OPENAI_API_KEY", None)
+    env.pop("REGRESS_JUDGE_API_KEY", None)
+    env.pop("REGRESS_JUDGE_BASE_URL", None)
+    if judge_api_key is not None:
+        env["OPENAI_API_KEY"] = judge_api_key
+    if judge_base_url is not None:
+        env["REGRESS_JUDGE_BASE_URL"] = judge_base_url
+    return env
 
 
-def _run_cli(*args: str, db_url: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    *args: str,
+    db_url: str,
+    judge_api_key: str | None = None,
+    judge_base_url: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "regress.cli", *args],
-        env=_subprocess_env(db_url),
+        env=_subprocess_env(db_url, judge_api_key=judge_api_key, judge_base_url=judge_base_url),
         capture_output=True,
         text=True,
         timeout=30,
     )
+
+
+class _FakeJudgeHandler(BaseHTTPRequestHandler):
+    """A local stand-in for an OpenAI-compatible chat-completions endpoint."""
+
+    def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's naming convention)
+        verdict = json.dumps({"passed": True, "score": 0.9, "reasoning": "looks fine"})
+        body = json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:  # silence test output
+        pass
+
+
+class _FakeJudgeServer:
+    def __init__(self) -> None:
+        self.server = HTTPServer(("127.0.0.1", 0), _FakeJudgeHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        port = self.server.server_address[1]
+        return f"http://127.0.0.1:{port}/v1"
+
+    def __exit__(self, *exc: object) -> None:
+        self.server.shutdown()
+        self.thread.join()
 
 
 def _seed_span(db_url: str, text: str) -> None:
@@ -112,3 +164,44 @@ def test_score_command_reports_config_error(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "unknown deterministic check" in (result.stdout + result.stderr)
+
+
+def test_score_command_prints_notice_and_runs_judge_when_key_present(
+    tmp_path: Path,
+) -> None:
+    db_url = f"sqlite:///{tmp_path / 'seeded.db'}"
+    _seed_span(db_url, "a perfectly normal response")
+
+    with _FakeJudgeServer() as base_url:
+        result = _run_cli(
+            "score", db_url=db_url, judge_api_key="sk-test", judge_base_url=base_url
+        )
+
+    assert result.returncode == 0
+    assert "built-in quality check" in result.stdout
+    assert "Scored 1 span(s) against 2 check(s): 2 score(s)." in result.stdout
+
+
+def test_score_command_no_notice_or_judge_check_without_key(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'seeded.db'}"
+    _seed_span(db_url, "a perfectly normal response")
+
+    result = _run_cli("score", db_url=db_url)
+
+    assert result.returncode == 0
+    assert "built-in quality check" not in result.stdout
+    assert "Scored 1 span(s) against 1 check(s): 1 score(s)." in result.stdout
+
+
+def test_score_command_no_notice_with_real_config_even_with_key(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'seeded.db'}"
+    _seed_span(db_url, "a perfectly normal response")
+    config_path = tmp_path / "regress.yaml"
+    config_path.write_text("checks:\n  - check: not_refusal\n")
+
+    result = _run_cli(
+        "score", "--config", str(config_path), db_url=db_url, judge_api_key="sk-test"
+    )
+
+    assert result.returncode == 0
+    assert "built-in quality check" not in result.stdout

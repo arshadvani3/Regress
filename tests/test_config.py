@@ -5,12 +5,60 @@ import pytest
 from regress.config import ConfigError, load_config
 
 
-def test_load_config_returns_default_when_file_missing(tmp_path: Path) -> None:
+def test_load_config_returns_default_when_file_missing_and_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REGRESS_JUDGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
     config = load_config(tmp_path / "does_not_exist.yaml")
 
     assert len(config.checks) == 1
     assert config.checks[0].check == "not_refusal"
     assert config.checks[0].tier == "deterministic"
+    assert config.used_zero_config_judge is False
+
+
+def test_load_config_adds_response_quality_judge_when_key_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REGRESS_JUDGE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    config = load_config(tmp_path / "does_not_exist.yaml")
+
+    assert len(config.checks) == 2
+    assert config.checks[0].check == "not_refusal"
+    judge_check = config.checks[1]
+    assert judge_check.check == "judge_rubric"
+    assert judge_check.name == "response_quality"
+    assert judge_check.tier == "judge"
+    assert "rubric" in judge_check.params
+    assert config.used_zero_config_judge is True
+
+
+def test_load_config_adds_response_quality_judge_with_regress_judge_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("REGRESS_JUDGE_API_KEY", "sk-judge-only")
+
+    config = load_config(tmp_path / "does_not_exist.yaml")
+
+    assert len(config.checks) == 2
+    assert config.used_zero_config_judge is True
+
+
+def test_load_config_with_real_regress_yaml_never_sets_zero_config_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    path = tmp_path / "regress.yaml"
+    path.write_text("checks:\n  - check: not_refusal\n")
+
+    config = load_config(path)
+
+    assert config.used_zero_config_judge is False
 
 
 def test_load_config_parses_deterministic_checks(tmp_path: Path) -> None:

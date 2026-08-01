@@ -1,18 +1,24 @@
 """Optional `regress.yaml` config: declare which checks run against which spans.
 
 Per CLAUDE.md's zero-config-default-path principle, this file is entirely
-optional — `regress score` with no config runs only `not_refusal` (the one
-check with no required parameters) against every span. Everything else
-needs a rubric/schema/threshold the tool can't guess, so it's opt-in here.
+optional. With no config, `regress score` always runs `not_refusal` (free,
+no LLM involved). When an API key is available in the environment, it also
+runs a built-in `response_quality` judge check — otherwise a first-time user
+whose app doesn't literally refuse sees "everything passed" and never finds
+the tool's actual value. No key, no config file needed for that -- and no
+judge check runs, since that would mean a paid call the user never asked for.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from regress.scoring.rubrics import RESPONSE_QUALITY
 
 DEFAULT_CONFIG_PATH = Path("regress.yaml")
 
@@ -46,13 +52,33 @@ class RegressConfig:
     checks: list[CheckConfig] = field(default_factory=list)
     judge_model: str = "gpt-4o-mini"
     judge_base_url: str = "https://api.openai.com/v1"
+    # True only for the zero-config (no regress.yaml) default when an API key
+    # was found and the built-in response_quality judge check was included --
+    # lets callers (the CLI) decide whether to print a cost notice, without
+    # re-implementing the "is a key available" check themselves.
+    used_zero_config_judge: bool = False
+
+
+def _has_judge_api_key() -> bool:
+    return bool(os.environ.get("REGRESS_JUDGE_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 
 def load_config(path: Path | None = None) -> RegressConfig:
     """Load `regress.yaml`, or return the zero-config default if absent."""
     config_path = path or DEFAULT_CONFIG_PATH
     if not config_path.exists():
-        return RegressConfig(checks=[CheckConfig(check="not_refusal", name="not_refusal")])
+        checks = [CheckConfig(check="not_refusal", name="not_refusal")]
+        has_key = _has_judge_api_key()
+        if has_key:
+            checks.append(
+                CheckConfig(
+                    check="judge_rubric",
+                    name="response_quality",
+                    params={"rubric": RESPONSE_QUALITY},
+                    tier="judge",
+                )
+            )
+        return RegressConfig(checks=checks, used_zero_config_judge=has_key)
 
     try:
         raw = yaml.safe_load(config_path.read_text()) or {}
