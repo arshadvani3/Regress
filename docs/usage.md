@@ -175,6 +175,21 @@ Considered 42 scored-bad trace(s), found 3 cluster(s).
     - 'Refuses valid refund requests' (a1b2c3d4) is failing again
 ```
 
+**Early on you may not have enough failures yet.** Clustering never invents
+patterns from thin data — if you have fewer failures than
+`--min-cluster-size`, it tells you exactly how many you have and what to do
+(run more traffic, or retry at a lower floor):
+
+```
+Only 2 scored-bad traces found (need at least 3 similar ones to form a
+reliable cluster). With this few, retry at `--min-cluster-size 2` to group
+them, or keep running your app to accumulate more.
+```
+
+`--min-cluster-size` must be at least 2 (a cluster needs two similar
+failures). This is why generated evals are trustworthy: an eval only ever
+comes from a real, repeated failure pattern — never a one-off.
+
 > `sentence-transformers` pulls in `torch`, which would blow past the "5
 > minutes to first trace" quickstart — so clustering is an opt-in extra.
 

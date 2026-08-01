@@ -20,6 +20,45 @@ def main() -> None:
     """Regress: your agent's production failures become its regression suite."""
 
 
+# HDBSCAN needs at least 2 points to form a cluster; anything lower is a
+# configuration mistake, not something to silently clamp or crash deep in
+# scikit-learn with an opaque error.
+MIN_ALLOWED_CLUSTER_SIZE = 2
+
+
+def _validate_min_cluster_size(min_cluster_size: int) -> None:
+    if min_cluster_size < MIN_ALLOWED_CLUSTER_SIZE:
+        raise click.ClickException(
+            f"--min-cluster-size must be at least {MIN_ALLOWED_CLUSTER_SIZE} "
+            f"(a cluster needs at least two similar failures); got {min_cluster_size}."
+        )
+
+
+def _too_few_failures_message(traces_considered: int, min_cluster_size: int) -> str:
+    """Actionable guidance for the 'not enough failures to cluster yet' case,
+    instead of a dead-end -- never fabricate clusters from thin data."""
+    if traces_considered == 0:
+        return (
+            "No scored-bad traces found. Run `regress score` first, or ingest "
+            "more traffic — clustering groups failures, so it needs some."
+        )
+    plural = "s" if traces_considered != 1 else ""
+    lower = max(MIN_ALLOWED_CLUSTER_SIZE, traces_considered)
+    hint = ""
+    if lower < min_cluster_size:
+        hint = (
+            f" With this few, retry at `--min-cluster-size {lower}` to group them, "
+            f"or keep running your app to accumulate more."
+        )
+    else:
+        hint = " Keep running your app to accumulate more similar failures."
+    return (
+        f"Only {traces_considered} scored-bad trace{plural} found "
+        f"(need at least {min_cluster_size} similar ones to form a reliable "
+        f"cluster).{hint}"
+    )
+
+
 @main.command()
 @click.option(
     "--path",
@@ -172,6 +211,8 @@ def cluster(min_cluster_size: int) -> None:
     from regress.clustering.run import run_clustering
     from regress.db import get_session, init_db
 
+    _validate_min_cluster_size(min_cluster_size)
+
     init_db()
     with get_session() as session:
         try:
@@ -181,9 +222,15 @@ def cluster(min_cluster_size: int) -> None:
         session.commit()
 
         if result.traces_considered < min_cluster_size:
+            click.echo(_too_few_failures_message(result.traces_considered, min_cluster_size))
+            return
+
+        if result.clusters_found == 0:
             click.echo(
-                f"Only {result.traces_considered} scored-bad trace(s) found "
-                f"(need at least {min_cluster_size}). Nothing to cluster yet."
+                f"Considered {result.traces_considered} scored-bad trace(s) but found "
+                f"no clusters — the failures were too dissimilar to group at "
+                f"`--min-cluster-size {min_cluster_size}`. Try a lower value, or "
+                f"accumulate more traffic."
             )
             return
 
@@ -288,6 +335,8 @@ def analyze(config_path: Path | None, min_cluster_size: int, evals_dir: Path) ->
     from regress.models import Issue, Score, Span
     from regress.scoring.run import score_spans
 
+    _validate_min_cluster_size(min_cluster_size)
+
     try:
         config = load_config(config_path)
     except ConfigError as exc:
@@ -339,8 +388,16 @@ def analyze(config_path: Path | None, min_cluster_size: int, evals_dir: Path) ->
 
         if cluster_result.traces_considered < min_cluster_size:
             click.echo(
-                f"Clustered: only {cluster_result.traces_considered} scored-bad trace(s) "
-                f"found (need at least {min_cluster_size}). Nothing to cluster yet."
+                "Clustered: "
+                + _too_few_failures_message(
+                    cluster_result.traces_considered, min_cluster_size
+                )
+            )
+        elif cluster_result.clusters_found == 0:
+            click.echo(
+                f"Clustered {cluster_result.traces_considered} scored-bad trace(s) but "
+                f"found no clusters — too dissimilar to group at "
+                f"`--min-cluster-size {min_cluster_size}`."
             )
         else:
             click.echo(

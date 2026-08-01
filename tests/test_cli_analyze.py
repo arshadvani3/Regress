@@ -132,7 +132,8 @@ def test_analyze_scores_then_reports_nothing_to_cluster_below_min_size(
 
     assert result.returncode == 0
     assert "Scored 1 span(s) against 1 check(s): 1 score(s), 1 failing." in result.stdout
-    assert "Clustered: only 1 scored-bad trace(s) found" in result.stdout
+    assert "Clustered: Only 1 scored-bad trace found" in result.stdout
+    assert "need at least 3" in result.stdout
 
 
 def test_analyze_reports_nothing_new_to_score_when_all_spans_scored(
@@ -172,3 +173,12 @@ def test_analyze_reports_no_active_issues_when_none_exist(tmp_path: Path) -> Non
 
     assert result.returncode == 0
     assert "Evals: no active issues to generate from." in result.stdout
+
+
+def test_analyze_rejects_min_cluster_size_below_two(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'empty.db'}"
+
+    result = _run_cli("analyze", "--min-cluster-size", "1", db_url=db_url)
+
+    assert result.returncode != 0
+    assert "must be at least 2" in (result.stdout + result.stderr)

@@ -63,7 +63,8 @@ def test_cluster_command_reports_nothing_to_cluster_when_db_empty(tmp_path: Path
     result = _run_cli("cluster", db_url=db_url)
 
     assert result.returncode == 0
-    assert "Nothing to cluster yet." in result.stdout
+    assert "No scored-bad traces found" in result.stdout
+    assert "regress score" in result.stdout
 
 
 def test_cluster_command_reports_nothing_to_cluster_below_min_size(tmp_path: Path) -> None:
@@ -73,5 +74,17 @@ def test_cluster_command_reports_nothing_to_cluster_below_min_size(tmp_path: Pat
     result = _run_cli("cluster", "--min-cluster-size", "3", db_url=db_url)
 
     assert result.returncode == 0
-    assert "Only 1 scored-bad trace(s) found" in result.stdout
-    assert "Nothing to cluster yet." in result.stdout
+    assert "Only 1 scored-bad trace found" in result.stdout
+    assert "need at least 3" in result.stdout
+    # actionable guidance: points at the concrete lever
+    assert "--min-cluster-size 2" in result.stdout
+
+
+def test_cluster_command_rejects_min_cluster_size_below_two(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'seeded.db'}"
+    _seed_bad_span(db_url, "t1", "a refused response")
+
+    result = _run_cli("cluster", "--min-cluster-size", "1", db_url=db_url)
+
+    assert result.returncode != 0
+    assert "must be at least 2" in (result.stdout + result.stderr)
