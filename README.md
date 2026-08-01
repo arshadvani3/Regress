@@ -52,7 +52,8 @@ a real bug in Regress itself. Full write-up → **[docs/case-study.md](docs/case
 ## Quickstart
 
 ```bash
-pip install regress-ai
+pip install git+https://github.com/arshadvani3/Regress.git
+# once published to PyPI: pip install regress-ai
 regress up          # collector + API + dashboard, one process, SQLite by default
 ```
 

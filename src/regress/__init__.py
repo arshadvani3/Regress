@@ -2,6 +2,6 @@
 
 from regress._instrument_sdk import current_trace_id, feedback, instrument, task
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = ["__version__", "current_trace_id", "feedback", "instrument", "task"]
