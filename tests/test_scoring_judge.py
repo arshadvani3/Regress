@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from regress.models import Message, Span
-from regress.scoring.judge import JudgeClient, JudgeError, judge_rubric
+from regress.scoring.judge import JudgeClient, JudgeError, judge_rubric, judge_rubric_text
 
 
 def _span_with_output(text: str) -> Span:
@@ -17,6 +17,27 @@ def _span_with_output(text: str) -> Span:
             position=0,
             content={"role": "assistant", "parts": [{"type": "text", "content": text}]},
         )
+    ]
+    return span
+
+
+def _span_with_input_and_output(input_text: str, output_text: str) -> Span:
+    span = Span(id="s1", trace_id="t1", name="chat", status="ok")
+    span.messages = [
+        Message(
+            span_id="s1",
+            direction="input",
+            role="user",
+            position=0,
+            content={"role": "user", "parts": [{"type": "text", "content": input_text}]},
+        ),
+        Message(
+            span_id="s1",
+            direction="output",
+            role="assistant",
+            position=1,
+            content={"role": "assistant", "parts": [{"type": "text", "content": output_text}]},
+        ),
     ]
     return span
 
@@ -128,3 +149,80 @@ def test_judge_client_sends_bearer_header_and_model(monkeypatch: pytest.MonkeyPa
     assert captured["url"] == "http://local:1234/v1/chat/completions"
     assert captured["headers"]["authorization"] == "Bearer sk-test"
     assert captured["json"]["model"] == "custom-model"
+
+
+def test_judge_rubric_includes_span_input_in_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        captured["json"] = kwargs["json"]
+        return _fake_response(json.dumps({"passed": True, "score": 1.0, "reasoning": "ok"}))
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.post", fake_post)
+    span = _span_with_input_and_output(
+        "What is the refund window?", "Refunds arrive in 3-5 business days."
+    )
+
+    judge_rubric(span, "Answers the question.", client=JudgeClient(api_key="sk-test"))
+
+    user_message = captured["json"]["messages"][1]["content"]
+    assert "What is the refund window?" in user_message
+    assert "Refunds arrive in 3-5 business days." in user_message
+    assert "User input:" in user_message
+
+
+def test_judge_rubric_text_omits_input_section_when_not_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        captured["json"] = kwargs["json"]
+        return _fake_response(json.dumps({"passed": True, "score": 1.0, "reasoning": "ok"}))
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.post", fake_post)
+
+    judge_rubric_text("some output", "some rubric", client=JudgeClient(api_key="sk-test"))
+
+    user_message = captured["json"]["messages"][1]["content"]
+    assert "User input:" not in user_message
+
+
+def test_judge_rubric_text_includes_input_section_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        captured["json"] = kwargs["json"]
+        return _fake_response(json.dumps({"passed": True, "score": 1.0, "reasoning": "ok"}))
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.post", fake_post)
+
+    judge_rubric_text(
+        "some output",
+        "some rubric",
+        input_text="some question",
+        client=JudgeClient(api_key="sk-test"),
+    )
+
+    user_message = captured["json"]["messages"][1]["content"]
+    assert "User input:\nsome question" in user_message
+
+
+def test_judge_rubric_with_output_only_span_omits_input_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        captured["json"] = kwargs["json"]
+        return _fake_response(json.dumps({"passed": True, "score": 1.0, "reasoning": "ok"}))
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.post", fake_post)
+    span = _span_with_output("anything")
+
+    judge_rubric(span, "rubric", client=JudgeClient(api_key="sk-test"))
+
+    user_message = captured["json"]["messages"][1]["content"]
+    assert "User input:" not in user_message

@@ -16,6 +16,7 @@ import httpx
 
 from regress.models import Span
 from regress.scoring import ScoreResult, output_text
+from regress.scoring import input_text as span_input_text
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -91,6 +92,7 @@ def judge_rubric_text(
     response_text: str,
     rubric: str,
     *,
+    input_text: str | None = None,
     name: str = "judge_rubric",
     client: JudgeClient | None = None,
 ) -> ScoreResult:
@@ -100,13 +102,27 @@ def judge_rubric_text(
     build on — the eval runner scores fresh HTTP responses and stored
     strings, not `Span` objects, so this is what it needs directly.
 
+    `input_text`, when given, is what the response was actually replying
+    to (e.g. the user's question) — without it, rubrics like "does this
+    answer the question?" can't be graded properly, since the judge would
+    only ever see the output. Optional and omitted from the prompt when
+    not given, so callers scoring a bare string with no known input (e.g.
+    eval replay) are unaffected.
+
     Stores the rubric, model, and raw reasoning on the result for
     auditability, per CLAUDE.md's Scorer spec. Raises `JudgeError` on
     request failure or an unparseable verdict — callers decide whether to
     skip or fail the run.
     """
     judge_client = client or JudgeClient()
-    user_prompt = f"Rubric:\n{rubric}\n\nResponse to evaluate:\n{response_text}"
+    if input_text:
+        user_prompt = (
+            f"Rubric:\n{rubric}\n\n"
+            f"User input:\n{input_text}\n\n"
+            f"Response to evaluate:\n{response_text}"
+        )
+    else:
+        user_prompt = f"Rubric:\n{rubric}\n\nResponse to evaluate:\n{response_text}"
 
     raw_verdict = judge_client.complete(system=_JUDGE_SYSTEM_PROMPT, user=user_prompt)
     passed, score, reasoning = _parse_verdict(raw_verdict)
@@ -131,6 +147,14 @@ def judge_rubric(
 ) -> ScoreResult:
     """Score a span's output against a free-text rubric using an LLM judge.
 
-    See `judge_rubric_text` for the underlying implementation.
+    Passes the span's input text through too, so the judge can grade the
+    response in context. See `judge_rubric_text` for the underlying
+    implementation.
     """
-    return judge_rubric_text(output_text(span), rubric, name=name, client=client)
+    return judge_rubric_text(
+        output_text(span),
+        rubric,
+        input_text=span_input_text(span),
+        name=name,
+        client=client,
+    )

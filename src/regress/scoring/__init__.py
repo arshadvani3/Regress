@@ -48,4 +48,22 @@ def output_text(span: Span) -> str:
     return "\n".join(parts)
 
 
-__all__ = ["ScoreResult", "message_parts", "output_text"]
+def input_text(span: Span) -> str:
+    """Concatenate all of a span's input-message text content, in order.
+
+    Lets the judge see what was actually asked, not just what came back --
+    without it, rubrics like "does this answer the question?" can't be
+    graded properly.
+    """
+    parts = []
+    for message in sorted(span.messages, key=lambda m: m.position):
+        if message.direction != "input":
+            continue
+        for part in message_parts(message.content):
+            content = part.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+    return "\n".join(parts)
+
+
+__all__ = ["ScoreResult", "input_text", "message_parts", "output_text"]
