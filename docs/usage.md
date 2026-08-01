@@ -5,6 +5,7 @@ The complete command reference. For the 30-second version, see the
 `regress` subcommand — run `regress --help` or `regress <cmd> --help` for the
 authoritative flag list.
 
+- [regress demo](#regress-demo)
 - [regress init](#regress-init)
 - [1. Ingest traces](#1-ingest-traces)
 - [2. Score](#2-score)
@@ -15,6 +16,26 @@ authoritative flag list.
 - [6. Calibrate the judge](#6-calibrate-the-judge)
 - [The dashboard](#the-dashboard)
 - [Configuration reference](#configuration-reference)
+
+---
+
+## regress demo
+
+The fastest way to see what Regress does. Seeds a small, fictional
+support-bot scenario — failing traces already scored and clustered into two
+Issues (one `active`, one `regressed`, to show the lifecycle) — so `regress
+up`'s dashboard is populated the instant you install, with nothing to
+instrument first.
+
+```bash
+regress demo          # load the sample
+regress up            # then open http://localhost:8990 to explore it
+regress demo --reset  # remove it when you're done
+```
+
+Demo rows are tagged internally, so `--reset` removes exactly them and leaves
+any real data you've ingested untouched. Running `regress demo` again while
+it's already loaded is a no-op (it tells you to `--reset` first).
 
 ---
 

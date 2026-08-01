@@ -91,6 +91,51 @@ def init(config_path: Path | None, force: bool) -> None:
 
 
 @main.command()
+@click.option(
+    "--reset",
+    is_flag=True,
+    default=False,
+    help="Remove previously-seeded demo data (leaves your real data untouched).",
+)
+def demo(reset: bool) -> None:
+    """Load a sample scenario so you can see the whole loop without setup.
+
+    Seeds a small, fictional support-bot dataset -- failing traces already
+    scored and clustered into Issues (including a `regressed` one) -- so
+    `regress up`'s dashboard is populated the moment you install. All demo
+    rows are tagged so `regress demo --reset` removes exactly them.
+    """
+    from regress.db import get_session, init_db
+    from regress.demo import DEMO_APP, clear_demo_data, demo_data_present, seed_demo
+
+    init_db()
+    with get_session() as session:
+        if reset:
+            clear_demo_data(session)
+            session.commit()
+            click.echo("Removed demo data.")
+            return
+
+        if demo_data_present(session):
+            click.echo(
+                "Demo data is already loaded. Use `regress demo --reset` to remove it, "
+                "then re-run to reload."
+            )
+            return
+
+        count = seed_demo(session)
+        session.commit()
+
+    click.echo(
+        f"Seeded {count} demo trace(s) (app={DEMO_APP!r}), scored and "
+        f"clustered into 2 issues."
+    )
+    click.echo("Next: `regress up` and open http://localhost:8990 to explore them,")
+    click.echo("or `regress evalgen` to turn the issues into eval files.")
+    click.echo("Done exploring? `regress demo --reset` clears it all.")
+
+
+@main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Bind host.")
 @click.option("--port", default=8990, show_default=True, help="Bind port.")
 @click.option("--reload", is_flag=True, default=False, help="Enable autoreload (development only).")

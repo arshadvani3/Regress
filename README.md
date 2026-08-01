@@ -54,11 +54,17 @@ a real bug in Regress itself. Full write-up → **[docs/case-study.md](docs/case
 ```bash
 pip install git+https://github.com/arshadvani3/Regress.git
 # once published to PyPI: pip install regress-ai
-regress up          # collector + API + dashboard, one process, SQLite by default
+
+regress demo        # load a sample scenario — see the whole loop, zero setup
+regress up          # then open http://localhost:8990
 ```
 
+`regress demo` seeds a small sample (failing traces already scored and
+clustered into Issues, including a `regressed` one) so the dashboard is
+populated the moment you install — nothing to instrument first. `regress demo
+--reset` clears it. To point Regress at **your** app instead, change one line:
+
 ```python
-# your app — one line changed
 from regress import instrument
 instrument()        # patches OpenAI/Anthropic SDKs, emits OTel spans to localhost
 ```
