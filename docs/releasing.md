@@ -5,22 +5,25 @@ builds the dashboard, packages the wheel, and publishes on any pushed tag
 matching `v*` — using PyPI **Trusted Publishing** (OIDC), so no PyPI API token
 is stored as a repo secret.
 
-## One-time setup (before the first release)
+## One-time setup
 
-1. **Create the project on PyPI** — either publish once manually
-   (`python -m build && twine upload dist/*`) to reserve the `regress-ai` name,
-   or use PyPI's "pending publisher" flow to register a trusted publisher for a
-   project that doesn't exist yet.
-2. **Register a trusted publisher** on PyPI for `regress-ai`:
-   PyPI project → *Publishing* → *Add a new publisher* → GitHub, with:
+> Already done for `regress-ai` (completed for the v0.1.0 release). Kept here as
+> a reference for the mechanism and for anyone forking this project.
+
+1. **Register a pending publisher** on PyPI — this reserves the `regress-ai`
+   name *and* authorizes the workflow in one step, with no local `twine upload`
+   and no API token. On pypi.org → account → *Publishing* → *Add a pending
+   publisher* (GitHub), with:
+   - PyPI Project Name: `regress-ai`
    - Repository owner: `arshadvani3`
-   - Repository name: `Regress`
+   - Repository name: `Regress` (case-sensitive)
    - Workflow name: `release.yml`
    - Environment name: `pypi`
-3. **Create a `pypi` GitHub Environment** on this repo (Settings → Environments)
-   so `release.yml`'s `environment: pypi` gate has somewhere to point. Optional:
-   require a reviewer on that environment for an extra manual confirmation
-   before every publish.
+2. **Create a `pypi` GitHub Environment** on this repo (Settings → Environments)
+   so `release.yml`'s `environment: pypi` gate has somewhere to point. Add
+   yourself as a **required reviewer** (Deployment protection rules) so every
+   publish pauses for a one-click approval — the safety net against an
+   accidental tag push going live, since PyPI versions can't be re-uploaded.
 
 No secrets need to be added anywhere — Trusted Publishing exchanges a
 short-lived OIDC token for the release, scoped to this exact workflow.
@@ -30,13 +33,20 @@ short-lived OIDC token for the release, scoped to this exact workflow.
 1. Bump `version` in `pyproject.toml` and `__version__` in
    `src/regress/__init__.py` (keep them in sync).
 2. Commit the version bump.
-3. Tag and push:
+3. Tag the new version (annotated) and push just that tag — matching `vX.Y.Z`
+   triggers the workflow:
    ```bash
-   git tag v0.1.0
-   git push --tags
+   git tag -a vX.Y.Z -m "regress-ai X.Y.Z"
+   git push origin vX.Y.Z
    ```
-4. The `Release` workflow builds the dashboard, builds the sdist + wheel, and
-   publishes to PyPI. Watch the run under the *Actions* tab.
+4. The `Release` workflow builds the dashboard, builds the sdist + wheel, then
+   **pauses on the `pypi` environment gate**. Approve the deployment under the
+   *Actions* tab (Review deployments → `pypi` → Approve and deploy) to publish.
+
+> A version can only be published to PyPI once — if the `publish` job fails
+> *after* a version is live, you must bump to a new version; you can't re-upload.
+> If it fails *before* publishing (e.g. a config mismatch), fix and re-run the
+> job from the Actions UI — no new tag needed.
 
 ## Verifying a release
 
