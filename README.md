@@ -209,16 +209,15 @@ calibrate, plus the dashboard — works end to end, proven against a real
 LlamaIndex RAG (see the [case study](docs/case-study.md)). It's a self-hosted
 single-node tool today; public APIs may still shift.
 
-Streaming-completion capture already landed (`instrument()` traces
-token-streamed responses without forcing non-streaming), and a shared
-deployment can now require a bearer token (`REGRESS_AUTH_TOKEN`) and redact
-PII before it's stored (`REGRESS_SANITIZE_INGEST`) — see
+Recent hardening: streaming-completion capture in `instrument()`, concurrent +
+in-run-cached judge calls (a large score pass is no longer a sequential wait),
+and — for shared deployments — an optional bearer token (`REGRESS_AUTH_TOKEN`)
+and PII redaction before storage (`REGRESS_SANITIZE_INGEST`); see
 [docs/usage.md](docs/usage.md#deploying-beyond-localhost). Where it goes next:
 
 - **Postgres + pgvector** for teams past the single-node SQLite default —
-  the storage layer is already abstracted behind `REGRESS_DB_URL`.
-- **Async, cached judge calls** so a large score run isn't a sequential wait
-  and identical output+rubric pairs aren't re-judged.
+  the storage layer is already abstracted behind `REGRESS_DB_URL`, and failure
+  embeddings would be persisted rather than recomputed each cluster run.
 - **More judge backends** beyond OpenAI-compatible — the judge is a thin
   provider-agnostic client, so Anthropic/Bedrock/local slot in cleanly.
 

@@ -135,6 +135,12 @@ With no key set, zero-config runs `not_refusal` only — no LLM call, no cost,
 no notice. See [`regress init`](#regress-init) for scaffolding a
 `regress.yaml` with more rubrics to choose from.
 
+Judge calls run **concurrently** (bounded, default 8 in flight) rather than one
+span at a time, so a large scoring pass isn't a sequential wait. Verdicts are
+also **cached within a run** on `(model, prompt)`: because judging is
+deterministic (`temperature=0`), re-scoring while you iterate on a rubric only
+pays for prompts that actually changed.
+
 For anything else — schema validation, thresholds, or your own judge rubric —
 add an optional `regress.yaml`:
 

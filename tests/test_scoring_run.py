@@ -118,10 +118,10 @@ def test_score_spans_runs_multiple_checks_per_span(session: Session) -> None:
 def test_score_spans_reports_judge_errors_without_aborting(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def raise_connect_error(*args: object, **kwargs: object) -> httpx.Response:
+    async def raise_connect_error(self: object, *a: object, **kw: object) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr("regress.scoring.judge.httpx.post", raise_connect_error)
+    monkeypatch.setattr("regress.scoring.judge.httpx.AsyncClient.post", raise_connect_error)
     span = _make_span(session, "s1", "a normal response")
     config = RegressConfig(
         checks=[
@@ -144,3 +144,77 @@ def test_score_spans_reports_judge_errors_without_aborting(
     assert len(rows) == 1
     assert rows[0].name == "not_refusal"
     assert errors == [("s1", "helpful")]
+
+
+def _judge_config() -> RegressConfig:
+    return RegressConfig(
+        checks=[
+            CheckConfig(
+                check="judge_rubric", name="helpful", params={"rubric": "x"}, tier="judge"
+            )
+        ]
+    )
+
+
+def _fake_ok_response() -> httpx.Response:
+    import json
+
+    request = httpx.Request("POST", "http://example.test/v1/chat/completions")
+    verdict = json.dumps({"passed": True, "score": 0.9, "reasoning": "ok"})
+    return httpx.Response(
+        200, request=request, json={"choices": [{"message": {"content": verdict}}]}
+    )
+
+
+def test_score_spans_judges_spans_concurrently(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Many judge calls should overlap, not run one-at-a-time."""
+    import asyncio
+
+    state = {"in_flight": 0, "peak": 0}
+
+    async def fake_apost(self: object, *a: object, **kw: object) -> httpx.Response:
+        state["in_flight"] += 1
+        state["peak"] = max(state["peak"], state["in_flight"])
+        await asyncio.sleep(0.02)  # hold the slot so overlap is observable
+        state["in_flight"] -= 1
+        return _fake_ok_response()
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.AsyncClient.post", fake_apost)
+
+    # 6 distinct spans (distinct text -> distinct cache keys -> 6 real calls)
+    spans = [_make_span(session, f"s{i}", f"response number {i}") for i in range(6)]
+    client = JudgeClient(api_key="sk-test", max_concurrency=4)
+
+    rows = score_spans(session, spans, _judge_config(), judge_client=client)
+
+    assert len(rows) == 6
+    assert state["peak"] > 1  # actually concurrent, not sequential
+    assert state["peak"] <= 4  # but bounded by max_concurrency
+
+
+def test_score_spans_async_error_isolation(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A judge failure on one span is reported and skipped, not fatal, on the
+    concurrent path too."""
+
+    async def raise_connect_error(self: object, *a: object, **kw: object) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("regress.scoring.judge.httpx.AsyncClient.post", raise_connect_error)
+    spans = [_make_span(session, f"s{i}", f"response number {i}") for i in range(3)]
+    client = JudgeClient(api_key="sk-test")
+    errors = []
+
+    rows = score_spans(
+        session,
+        spans,
+        _judge_config(),
+        judge_client=client,
+        on_error=lambda span, check, exc: errors.append(span.id),
+    )
+
+    assert rows == []
+    assert sorted(errors) == ["s0", "s1", "s2"]
