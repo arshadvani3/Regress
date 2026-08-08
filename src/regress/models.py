@@ -215,3 +215,30 @@ class Label(Base):
     )
 
     score: Mapped[Score] = relationship(back_populates="labels")
+
+
+class TraceEmbedding(Base):
+    """A persisted embedding of one trace's failure text, so `regress cluster`
+    embeds only *new* failures on a repeat run instead of recomputing every
+    vector from scratch (embedding is the slow, model-loading part of
+    clustering).
+
+    `text_hash` is a fingerprint of the exact text that was embedded. A trace's
+    failure text can change (e.g. after re-scoring produces new judge
+    reasoning), so a stored vector is only reused when the current text hashes
+    to the same value — otherwise it's re-embedded and this row is updated. The
+    vector is stored as JSON, which keeps this in the zero-config SQLite path
+    with no database server; Postgres + pgvector remain the documented scale
+    option (storage is already abstracted behind `REGRESS_DB_URL`).
+    """
+
+    __tablename__ = "trace_embeddings"
+
+    trace_id: Mapped[str] = mapped_column(
+        String, ForeignKey("traces.id"), primary_key=True
+    )
+    text_hash: Mapped[str] = mapped_column(String)
+    vector: Mapped[list[float]] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -190,6 +190,12 @@ last user message + final output) with a local `bge-small-en-v1.5` model,
 groups similar failures with HDBSCAN, and asks the judge model to write a title
 and description per cluster.
 
+Embeddings are **persisted and reused**: each trace's vector is stored (keyed on
+the exact text embedded), so re-running `regress cluster` only embeds new or
+changed failures rather than recomputing every vector — running it repeatedly
+as failures accumulate stays cheap. This lives entirely in the default SQLite
+file; no database server is involved.
+
 A cluster that matches an existing issue adds its traces there; a cluster that
 matches a **resolved** issue flips it to **regressed** — the loudest signal in
 the tool, because it means a fix didn't hold:

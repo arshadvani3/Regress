@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from regress.clustering import failure_text, scored_bad_traces
 from regress.clustering.cluster import Cluster, cluster_traces
 from regress.clustering.embed import Embedder, load_embedder
+from regress.clustering.embed_store import embed_incremental
 from regress.clustering.lifecycle import LifecycleResult, apply_clusters
 from regress.clustering.titler import IssueTitle, TitlerError, title_cluster
 from regress.models import Trace
@@ -47,7 +48,8 @@ def run_clustering(
 
     clusterable = [failure_text(trace) for trace in bad_traces]
     active_embedder = embedder or load_embedder()
-    embeddings = active_embedder.embed([c.text for c in clusterable])
+    # Incremental: reuse stored vectors, embed only new/changed failure text.
+    embeddings = embed_incremental(session, clusterable, active_embedder)
 
     clusters: list[Cluster] = cluster_traces(
         [c.trace_id for c in clusterable], embeddings, min_cluster_size=min_cluster_size

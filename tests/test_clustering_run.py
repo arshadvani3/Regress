@@ -32,7 +32,11 @@ class _FakeEmbedder:
     behavior is covered against real embeddings in test_clustering_cluster.py).
     """
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     def embed(self, texts: list[str]) -> np.ndarray:
+        self.calls += len(texts)
         return np.zeros((len(texts), 3))
 
 
@@ -164,3 +168,20 @@ def test_run_clustering_returns_zero_clusters_when_all_traces_are_noise(
     assert result.traces_considered == 3
     assert result.clusters_found == 0
     assert result.lifecycle.new_issues == []
+
+
+def test_run_clustering_reuses_embeddings_across_runs(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a second cluster run doesn't re-embed unchanged traces."""
+    monkeypatch.setattr(run_module, "cluster_traces", lambda *a, **kw: [])
+    for i in range(3):
+        _seed_bad_trace(session, f"t{i}", "an isolated failure")
+
+    first = _FakeEmbedder()
+    run_clustering(session, min_cluster_size=3, embedder=first)
+    assert first.calls == 3  # first run embeds all three
+
+    second = _FakeEmbedder()
+    run_clustering(session, min_cluster_size=3, embedder=second)
+    assert second.calls == 0  # nothing changed -> nothing re-embedded

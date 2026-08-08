@@ -188,7 +188,13 @@ never do by hand again.
 ## Design principles
 
 - **Zero-config default path.** SQLite + local embeddings (`bge-small-en-v1.5`)
-  out of the box. Postgres + pgvector is opt-in via `REGRESS_DB_URL` for scale.
+  out of the box — no database server to run. Failure embeddings are *persisted*
+  (keyed on the exact text embedded), so re-clustering only embeds new or
+  changed failures instead of recomputing every vector each run — a real
+  speedup that stays entirely in the serverless SQLite path, on purpose: a
+  single-node failure-to-eval tool that required Postgres would betray the
+  "pip install and go" promise. Postgres + pgvector is a documented opt-in via
+  `REGRESS_DB_URL` for teams that outgrow one node, not a default.
 - **Standards over SDK lock-in.** Ingestion speaks OpenTelemetry GenAI
   conventions over OTLP/HTTP. `instrument()` is a convenience, not a requirement.
 - **Everything is also a file.** Generated evals are plain YAML + Python in your
@@ -209,15 +215,17 @@ calibrate, plus the dashboard — works end to end, proven against a real
 LlamaIndex RAG (see the [case study](docs/case-study.md)). It's a self-hosted
 single-node tool today; public APIs may still shift.
 
-Recent hardening: streaming-completion capture in `instrument()`, concurrent +
+Recent work: streaming-completion capture in `instrument()`, concurrent +
 in-run-cached judge calls (a large score pass is no longer a sequential wait),
+persisted failure embeddings (re-clustering embeds only new/changed failures),
 and — for shared deployments — an optional bearer token (`REGRESS_AUTH_TOKEN`)
 and PII redaction before storage (`REGRESS_SANITIZE_INGEST`); see
 [docs/usage.md](docs/usage.md#deploying-beyond-localhost). Where it goes next:
 
-- **Postgres + pgvector** for teams past the single-node SQLite default —
-  the storage layer is already abstracted behind `REGRESS_DB_URL`, and failure
-  embeddings would be persisted rather than recomputed each cluster run.
+- **Postgres + pgvector** as a documented scale path for teams past the
+  single-node SQLite default — the storage layer is already abstracted behind
+  `REGRESS_DB_URL`, and embeddings already persist; pgvector would add
+  in-database similarity search. Deliberately opt-in, never required.
 - **More judge backends** beyond OpenAI-compatible — the judge is a thin
   provider-agnostic client, so Anthropic/Bedrock/local slot in cleanly.
 
